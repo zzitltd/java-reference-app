@@ -1,0 +1,30 @@
+# Local database development profile — SELF-CONTAINED, not a profile group over `db`
+# (group members are applied last: application-db.yaml's ${DB_*} placeholders would win
+# on the shared keys). Targets the compose-managed PostgreSQL (compose profile `db`),
+# whose init script (db/init/01-roles.sql) creates the expected role/permission layout.
+# Activate with:  --spring.profiles.active=local-db   or   SPRING_PROFILES_ACTIVE=local-db
+logging:
+  develop:
+    enabled: true
+spring:
+  liquibase:
+    # Explicit even though true is the default — see application-db.yaml: deployments
+    # flip this off in serving pods and migrate from a pre-install/pre-upgrade hook.
+    enabled: true
+  docker:
+    compose:
+      enabled: true
+      profiles:
+        active: db
+db:
+  enabled: true
+  readwrite:
+    url: jdbc:postgresql://localhost:5432/reference?currentSchema=reference
+    username: reference_app_rw_user
+    password: rw-local
+  readonly:
+    url: jdbc:postgresql://localhost:5432/reference?currentSchema=reference
+    username: reference_app_ro_user
+    password: ro-local
+    hikari:
+      read-only: true

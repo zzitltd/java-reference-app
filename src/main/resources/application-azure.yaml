@@ -1,0 +1,12 @@
+# Azure provider profile: activates the Blob-Storage-backed ObjectStorage adapter and
+# the Spring Cloud Azure autoconfiguration. Account/credentials come from the usual
+# Azure chain (managed identity, env vars, ...); for a workstation + emulator use
+# `local-azure`.
+cloud:
+  provider: azure
+spring:
+  cloud:
+    azure:
+      storage:
+        blob:
+          enabled: true

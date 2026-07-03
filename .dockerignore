@@ -1,0 +1,11 @@
+# Keep the build context lean. The prebuilt target needs ONLY target/*.jar from the
+# build output; the in-image builder target needs the sources + .git (versioning).
+target/**
+!target/*.jar
+logs/
+# NEVER let the local k3s ADMIN KUBECONFIG into a build context.
+k3s-output/
+.idea/
+.vscode/
+.claude/
+*.iml

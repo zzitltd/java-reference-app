@@ -1,0 +1,90 @@
+spring:
+  application:
+    name: reference-app
+  profiles:
+    group:
+      # Convenience for workstations: `local-aws` = `aws` + the emulator bits; same for
+      # azure/k8s. Caution: group members are applied LAST and win on overlapping keys —
+      # groups only compose cleanly over disjoint ones (`local-db` is self-contained
+      # for exactly that reason).
+      local-aws: aws
+      local-azure: azure
+      local-k8s: k8s
+  lifecycle:
+    # Drain budget for graceful shutdown — must fit inside Kubernetes' termination
+    # grace period (default 30s) with headroom for preStop hooks and JVM exit.
+    timeout-per-shutdown-phase: 25s
+  docker:
+    compose:
+      # Off by default so it never runs in tests or production; the `local-*`
+      # profiles re-enable it to manage the matching emulator (compose.yaml).
+      enabled: false
+  autoconfigure:
+    # DatabaseConfiguration manages its own two pools, so Boot's single-DataSource
+    # autoconfiguration must not run — it would fail without config (no URL).
+    # Liquibase stays autoconfigured: it migrates through the primary pool and backs
+    # off entirely while no DataSource beans exist (db.enabled=false).
+    exclude:
+      - org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration
+  cloud:
+    # Both cloud SDKs are on the classpath, but their autoconfiguration is OFF by
+    # default — cloud support is optional. The `aws` / `azure` profiles turn exactly
+    # one on, together with the matching `cloud.provider` adapter (see below).
+    aws:
+      s3:
+        enabled: false
+    azure:
+      storage:
+        blob:
+          enabled: false
+
+server:
+  # On SIGTERM: readiness flips to false, in-flight requests drain (bounded by
+  # spring.lifecycle.timeout-per-shutdown-phase above), then the app exits.
+  shutdown: graceful
+
+# Which ObjectStorage adapter to activate: aws | azure | none (default: no cloud at
+# all). Set via the `aws` / `azure` Spring profiles rather than directly, so the SDK
+# enable-flags above stay in sync — see application-{aws,azure}.yaml.
+cloud:
+  provider: none
+
+# Relational database example — off by default (no DataSource, no Liquibase, no DB
+# needed to run). The `db` profile turns it on and expects the connection settings
+# from the environment; `local-db` targets the compose-managed PostgreSQL instead.
+db:
+  enabled: false
+
+# Kubernetes API example (leader election via Lease) — off by default. The `k8s`
+# profile turns it on (in-cluster service account); `local-k8s` targets the
+# compose-managed k3s instead.
+k8s:
+  enabled: false
+
+logging:
+  json:
+    # Console (STDOUT) format: Spring Boot's default plaintext pattern, or JSON when true.
+    enabled: false
+  develop:
+    # Development-only extra: also write a rolling plaintext file under ./logs.
+    # Useful on workstations; useless (and capped-ephemeral-hostile) in production.
+    enabled: false
+
+management:
+  server:
+    # Serve actuator on a separate port from the application traffic.
+    port: 6080
+  endpoints:
+    web:
+      exposure:
+        # sbom: the CycloneDX SBOM (META-INF/sbom) generated at package time.
+        # prometheus: Micrometer metrics (JVM, HTTP server, datasource, ...) for scraping.
+        include: health,info,sbom,prometheus
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        # Expose the liveness/readiness groups (/actuator/health/{liveness,readiness})
+        # everywhere, not just on Kubernetes — add custom readiness checks to the
+        # groups here as they appear.
+        enabled: true

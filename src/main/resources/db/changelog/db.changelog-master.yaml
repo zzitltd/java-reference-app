@@ -1,0 +1,25 @@
+# Liquibase changelog — executed at startup by the read-write user (Boot's Liquibase
+# autoconfiguration over the primary DataSource; no separate migration credentials).
+# Contains SCHEMA OBJECTS ONLY: roles and access permissions are provisioned with the
+# database itself, including default privileges that auto-grant everything created here
+# to the rw/ro groups — see db/init/01-roles.sql for the expected layout.
+databaseChangeLog:
+  - changeSet:
+      id: 001-create-greeting
+      author: reference-app
+      changes:
+        - createTable:
+            tableName: greeting
+            columns:
+              - column:
+                  name: id
+                  type: bigint
+                  autoIncrement: true
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: message
+                  type: text
+                  constraints:
+                    nullable: false

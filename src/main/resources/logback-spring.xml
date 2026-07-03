@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Logging for reference-app. Everything goes to STDOUT; the settings stay as close to the
+  Spring Boot defaults as possible. Three flags — the two console JSON modes are MUTUALLY
+  EXCLUSIVE (enforced fail-fast by LoggingModeGuard; here custom-json simply wins):
+
+    * logging.json.enabled        (default false): console in logback's default JSON
+      format (JsonEncoder) — for platforms that just want structured output.
+    * logging.custom-json.enabled (default false): console in a stable, collector-friendly
+      JSON schema (logstash-logback-encoder): `@timestamp` in ISO-8601 with time-zone,
+      lowercase_with_underscore keys, `level` + `message`, one event per physical line —
+      stack traces stay inside the JSON string.
+    * logging.develop.enabled     (default false): ALSO write a rolling plaintext file under
+      ./logs — a development convenience only. In production the file is useless (STDOUT
+      is what gets collected) and ephemeral storage is scarce, so it stays off. The size
+      caps default to well under a 128 MiB ephemeral budget.
+
+  With no flags set, the console is Spring Boot's DEFAULT plaintext layout.
+
+  Must be named logback-spring.xml (not logback.xml) so <springProperty> works. The
+  conditional blocks use logback's class-based <condition> (logback 1.5.20+) preceding
+  <if> — no Janino, no runtime code compilation. Tests use a separate console-only
+  logback-test.xml.
+-->
+<configuration>
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+
+    <springProperty name="jsonLoggingEnabled" source="logging.json.enabled" defaultValue="false"/>
+    <springProperty name="customJsonLoggingEnabled" source="logging.custom-json.enabled" defaultValue="false"/>
+    <springProperty name="developLoggingEnabled" source="logging.develop.enabled" defaultValue="false"/>
+
+    <!-- CONSOLE (STDOUT): custom JSON schema > default JSON > Spring Boot's stock
+         console appender (the default pattern/colors from console-appender.xml). -->
+    <condition class="ch.qos.logback.core.boolex.PropertyEqualityCondition">
+        <key>customJsonLoggingEnabled</key>
+        <value>true</value>
+    </condition>
+    <if>
+        <then>
+            <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+                <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+                    <!-- Defaults already fit the schema (@timestamp, level, message,
+                         logger_name, thread_name, stack_trace); drop the two fields
+                         that add no value. -->
+                    <fieldNames>
+                        <version>[ignore]</version>
+                        <levelValue>[ignore]</levelValue>
+                    </fieldNames>
+                </encoder>
+            </appender>
+        </then>
+        <else>
+            <condition class="ch.qos.logback.core.boolex.PropertyEqualityCondition">
+                <key>jsonLoggingEnabled</key>
+                <value>true</value>
+            </condition>
+            <if>
+                <then>
+                    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+                        <encoder class="ch.qos.logback.classic.encoder.JsonEncoder"/>
+                    </appender>
+                </then>
+                <else>
+                    <include resource="org/springframework/boot/logging/logback/console-appender.xml"/>
+                </else>
+            </if>
+        </else>
+    </if>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+
+    <!-- Development only: rolling plaintext file under ./logs (gitignored), Spring Boot's
+         default file layout. Caps are overridable but default to fitting a tight
+         ephemeral-storage budget. -->
+    <condition class="ch.qos.logback.core.boolex.PropertyEqualityCondition">
+        <key>developLoggingEnabled</key>
+        <value>true</value>
+    </condition>
+    <if>
+        <then>
+            <appender name="LOG_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+                <file>logs/app.log</file>
+                <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+                    <fileNamePattern>logs/app-%d{yyyy-MM-dd}.%i.log</fileNamePattern>
+                    <maxFileSize>${LOG_FILE_MAXFILESIZE:-10MB}</maxFileSize>
+                    <maxHistory>${LOG_FILE_MAXHISTORY:-7}</maxHistory>
+                    <totalSizeCap>${LOG_FILE_TOTALSIZECAP:-100MB}</totalSizeCap>
+                </rollingPolicy>
+                <encoder>
+                    <pattern>${FILE_LOG_PATTERN}</pattern>
+                    <charset>${FILE_LOG_CHARSET}</charset>
+                </encoder>
+            </appender>
+            <root level="INFO">
+                <appender-ref ref="LOG_FILE"/>
+            </root>
+        </then>
+    </if>
+</configuration>

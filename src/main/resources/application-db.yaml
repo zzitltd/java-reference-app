@@ -1,0 +1,32 @@
+# Database provider profile: activates the database example (see DatabaseConfiguration;
+# db/init/01-roles.sql documents the expected role/permission layout). Credentials come
+# from the secret store via the environment — no defaults on purpose, so a missing
+# setting fails fast instead of pointing somewhere stale. Liquibase needs no connection
+# config: Boot's autoconfiguration migrates through the primary pool. Key names mirror
+# spring.datasource.* (url/username/password + hikari.*).
+# For a workstation + compose-managed PostgreSQL use `local-db` instead.
+spring:
+  liquibase:
+    # Explicit even though true is the default — this is the knob that separates
+    # MIGRATING from SERVING. Typical deployment: run the migration once from a
+    # pre-install/pre-upgrade hook job (this stays true there) and switch it off in
+    # the serving pods (SPRING_LIQUIBASE_ENABLED=false) — mandatory for read-only
+    # app variants, and it keeps rollouts from racing each other on the changelog lock.
+    enabled: true
+
+db:
+  enabled: true
+  readwrite:
+    url: ${DB_RW_URL}
+    username: ${DB_RW_USERNAME}
+    password: ${DB_RW_PASSWORD}
+    hikari:
+      maximum-pool-size: ${DB_RW_POOL_SIZE:10}
+  readonly:
+    # In a real deployment this URL typically points at a read replica.
+    url: ${DB_RO_URL}
+    username: ${DB_RO_USERNAME}
+    password: ${DB_RO_PASSWORD}
+    hikari:
+      maximum-pool-size: ${DB_RO_POOL_SIZE:10}
+      read-only: true

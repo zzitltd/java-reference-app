@@ -1,0 +1,8 @@
+# Kubernetes provider profile: activates the Kubernetes API example — leader election
+# over a coordination.k8s.io Lease (see hu.zzit.reference.k8s). In-cluster the client
+# authenticates with the pod's SERVICE ACCOUNT automatically; the Role/RoleBinding the
+# app needs is documented in k8s/leader-election-rbac.yaml. The election identity
+# defaults to the hostname (= the pod name) and the namespace to the pod's own, so
+# nothing else needs configuring. For a workstation + k3s use `local-k8s`.
+k8s:
+  enabled: true

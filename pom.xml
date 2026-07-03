@@ -1,0 +1,937 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+
+	<parent>
+		<groupId>org.springframework.boot</groupId>
+		<artifactId>spring-boot-starter-parent</artifactId>
+		<version>4.1.0</version>
+		<relativePath/>
+		<!-- lookup parent from repository -->
+	</parent>
+
+	<groupId>hu.zzit</groupId>
+	<artifactId>reference-app</artifactId>
+	<!-- Placeholder only. The real version is derived from git at build time by
+	     maven-git-versioning-extension (.mvn/maven-git-versioning-extension.xml):
+	     a `vX.Y.Z` tag -> X.Y.Z, `main` -> next-patch SNAPSHOT. -->
+	<version>0.0.0-SNAPSHOT</version>
+
+	<name>reference-app</name>
+
+	<properties>
+		<java.version>25</java.version>
+		<maven.version>3.9.16</maven.version>
+
+		<!-- Reproducible builds. maven-git-versioning-extension overrides this with the
+		     commit timestamp on every matched ref; it must be declared here because the
+		     extension only overrides properties that ALREADY exist. The literal is the fallback
+		     for when no ref matches (detached/untagged) AND for IDE builds (m2e doesn't run the
+		     extension). Set to 1980-01-01T00:00:02Z — the earliest a ZIP/JAR can encode and the
+		     floor Spring Boot's build-info enforces (epoch 0 is rejected). The "fun" floor. -->
+		<project.build.outputTimestamp>1980-01-01T00:00:02Z</project.build.outputTimestamp>
+
+		<!-- Libraries -->
+		<!-- Spring Cloud AWS: 4.0.x targets Spring Boot 4.x / Spring Framework 7.x -->
+		<spring-cloud-aws.version>4.0.2</spring-cloud-aws.version>
+		<!-- Spring Cloud Azure: 7.x targets Spring Boot 4.x -->
+		<spring-cloud-azure.version>7.3.0</spring-cloud-azure.version>
+		<!-- Custom JSON console encoder (logging.custom-json.enabled) — standalone artifact,
+		     not managed by any BOM we import -->
+		<logstash-logback-encoder.version>9.0</logstash-logback-encoder.version>
+		<!-- Kubernetes API client (leader election via Lease) — standalone, not BOM-managed -->
+		<fabric8.version>7.8.0</fabric8.version>
+		<!-- Floci AWS emulator — Testcontainers module for integration tests -->
+		<testcontainers-floci.version>2.11.0</testcontainers-floci.version>
+		<!-- Testcontainers BOM (not managed by the Spring Boot 4.1 parent) -->
+		<testcontainers.version>2.0.5</testcontainers.version>
+
+		<!-- Plugins -->
+		<maven-enforcer-plugin.version>3.6.3</maven-enforcer-plugin.version>
+		<extra-enforcer-rules.version>1.12.0</extra-enforcer-rules.version>
+		<git-commit-id-maven-plugin.version>10.0.0</git-commit-id-maven-plugin.version>
+		<spotless-maven-plugin.version>3.8.0</spotless-maven-plugin.version>
+		<palantir-java-format.version>2.94.0</palantir-java-format.version>
+		<jacoco-maven-plugin.version>0.8.15</jacoco-maven-plugin.version>
+		<cyclonedx-maven-plugin.version>2.9.2</cyclonedx-maven-plugin.version>
+		<exec-maven-plugin.version>3.6.3</exec-maven-plugin.version>
+		<license-maven-plugin.version>2.7.1</license-maven-plugin.version>
+		<spotbugs-maven-plugin.version>4.10.2.0</spotbugs-maven-plugin.version>
+		<findsecbugs.version>1.14.0</findsecbugs.version>
+		<tidy-maven-plugin.version>1.4.0</tidy-maven-plugin.version>
+
+		<!-- JaCoCo agent argLines: empty by default so surefire/failsafe run un-instrumented;
+		     the `ci-reports` profile's jacoco:prepare-agent fills them via late (@{...}) binding. -->
+		<surefire.jacoco.args></surefire.jacoco.args>
+		<failsafe.jacoco.args></failsafe.jacoco.args>
+
+		<!-- CVE overrides — none yet. Pin a vulnerable transitive dependency here, each tagged
+		     with its CVE/GHSA id, the version it supersedes, and the fix (see the cm/c360 POMs). -->
+
+		<!-- Convergence pins: azure-identity's transitives are NOT managed by the Azure BOM and
+		     disagree (msal4j-persistence-extension lags azure-identity: msal4j 1.15.0 vs 1.23.1,
+		     jna-platform 5.13.0 vs 5.17.0). Pinned to the higher version; re-check on every
+		     spring-cloud-azure BOM bump. -->
+		<msal4j.version>1.23.1</msal4j.version>
+		<jna.version>5.17.0</jna.version>
+		<!-- Convergence pin: liquibase-core requires commons-text newer than its own
+		     transitive opencsv does. Pinned to the higher version; re-check on Liquibase bumps. -->
+		<commons-text.version>1.15.0</commons-text.version>
+	</properties>
+
+	<dependencyManagement>
+		<dependencies>
+			<!-- Convergence pins (see the properties block for the why). Direct entries here
+			     take precedence over the imported BOMs. -->
+			<dependency>
+				<groupId>com.microsoft.azure</groupId>
+				<artifactId>msal4j</artifactId>
+				<version>${msal4j.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>net.java.dev.jna</groupId>
+				<artifactId>jna</artifactId>
+				<version>${jna.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>net.java.dev.jna</groupId>
+				<artifactId>jna-platform</artifactId>
+				<version>${jna.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>org.apache.commons</groupId>
+				<artifactId>commons-text</artifactId>
+				<version>${commons-text.version}</version>
+			</dependency>
+			<!-- Spring Cloud AWS BOM: manages the io.awspring.cloud starters and a
+			     compatible AWS SDK v2 version, so individual AWS deps need no version. -->
+			<dependency>
+				<groupId>io.awspring.cloud</groupId>
+				<artifactId>spring-cloud-aws-dependencies</artifactId>
+				<version>${spring-cloud-aws.version}</version>
+				<type>pom</type>
+				<scope>import</scope>
+			</dependency>
+			<!-- Spring Cloud Azure BOM: manages the com.azure.spring starters and (via the
+			     imported azure-sdk-bom) a compatible Azure SDK, so individual Azure deps
+			     need no version. -->
+			<dependency>
+				<groupId>com.azure.spring</groupId>
+				<artifactId>spring-cloud-azure-dependencies</artifactId>
+				<version>${spring-cloud-azure.version}</version>
+				<type>pom</type>
+				<scope>import</scope>
+			</dependency>
+			<!-- Manages org.testcontainers:* so the modules need no explicit version
+			     and Floci's transitive Testcontainers deps converge. -->
+			<dependency>
+				<groupId>org.testcontainers</groupId>
+				<artifactId>testcontainers-bom</artifactId>
+				<version>${testcontainers.version}</version>
+				<type>pom</type>
+				<scope>import</scope>
+			</dependency>
+		</dependencies>
+	</dependencyManagement>
+	<dependencies>
+		<!-- Actuator: health / info / metrics endpoints (served on management port 6080) -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-actuator</artifactId>
+		</dependency>
+		<!-- Prometheus metrics via Micrometer: adding the registry activates the actuator
+		     /actuator/prometheus endpoint (exposed in application.yaml) with JVM, HTTP-server
+		     and datasource metrics out of the box — served on the management side port. -->
+		<dependency>
+			<groupId>io.micrometer</groupId>
+			<artifactId>micrometer-registry-prometheus</artifactId>
+			<scope>runtime</scope>
+		</dependency>
+
+		<!-- Custom JSON console format (logging.custom-json.enabled) — a collector-friendly,
+		     stable schema; only referenced from logback-spring.xml, hence runtime scope. -->
+		<dependency>
+			<groupId>net.logstash.logback</groupId>
+			<artifactId>logstash-logback-encoder</artifactId>
+			<version>${logstash-logback-encoder.version}</version>
+			<scope>runtime</scope>
+		</dependency>
+
+		<!-- Web layer on Jetty instead of the default Tomcat (fleet-wide convention) -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-web</artifactId>
+			<exclusions>
+				<exclusion>
+					<groupId>org.springframework.boot</groupId>
+					<artifactId>spring-boot-starter-tomcat</artifactId>
+				</exclusion>
+			</exclusions>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-jetty</artifactId>
+		</dependency>
+		<!-- Bean Validation provider. The jakarta.validation API arrives transitively either
+		     way — without a provider, MVC quietly SKIPS @Valid/@Validated instead of failing. -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-validation</artifactId>
+		</dependency>
+
+		<!-- Cloud object storage — BOTH providers are on the classpath, and BOTH are optional:
+		     each SDK's autoconfiguration is off by default (see application.yaml) and exactly one
+		     is switched on by the `aws` / `azure` Spring profile, which also selects the matching
+		     ObjectStorage adapter via the `cloud.provider` property. Derived services keep the
+		     provider(s) they use and delete the other starter + adapter. -->
+		<!-- AWS S3 via Spring Cloud AWS: autoconfigures S3Client / S3Template beans -->
+		<dependency>
+			<groupId>io.awspring.cloud</groupId>
+			<artifactId>spring-cloud-aws-starter-s3</artifactId>
+		</dependency>
+		<!-- Azure Blob Storage via Spring Cloud Azure: autoconfigures BlobServiceClient beans.
+		     Uses the JDK HTTP client flavor instead of the default Netty one (azure-core-http-netty
+		     targets Netty 4.1.x while the Boot parent manages 4.2.x — the SDK warns on every start). -->
+		<dependency>
+			<groupId>com.azure.spring</groupId>
+			<artifactId>spring-cloud-azure-starter-storage-blob</artifactId>
+			<exclusions>
+				<exclusion>
+					<groupId>com.azure</groupId>
+					<artifactId>azure-core-http-netty</artifactId>
+				</exclusion>
+			</exclusions>
+		</dependency>
+		<dependency>
+			<groupId>com.azure</groupId>
+			<artifactId>azure-core-http-jdk-httpclient</artifactId>
+			<scope>runtime</scope>
+		</dependency>
+
+		<!-- Kubernetes API example — OPTIONAL like the others: gated on k8s.enabled (default
+		     false). Demonstrates Lease-based leader election (see hu.zzit.reference.k8s).
+		     Uses the JDK HTTP client flavor instead of the default vert.x one. -->
+		<dependency>
+			<groupId>io.fabric8</groupId>
+			<artifactId>kubernetes-client</artifactId>
+			<version>${fabric8.version}</version>
+			<exclusions>
+				<exclusion>
+					<groupId>io.fabric8</groupId>
+					<artifactId>kubernetes-httpclient-vertx</artifactId>
+				</exclusion>
+			</exclusions>
+		</dependency>
+		<dependency>
+			<groupId>io.fabric8</groupId>
+			<artifactId>kubernetes-httpclient-jdk</artifactId>
+			<version>${fabric8.version}</version>
+			<scope>runtime</scope>
+		</dependency>
+
+		<!-- Relational database example — OPTIONAL like the cloud SDKs: gated on db.enabled
+		     (default false), pools built by DatabaseConfiguration, migration by Boot's
+		     autoconfigured Liquibase over the primary pool. -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-jdbc</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-liquibase</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.postgresql</groupId>
+			<artifactId>postgresql</artifactId>
+			<scope>runtime</scope>
+		</dependency>
+
+		<!-- Local dev only: auto-starts/stops the Floci emulator (compose.yaml) under the
+		     'local' profile via spring.docker.compose.enabled. optional => not leaked to consumers. -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-docker-compose</artifactId>
+			<scope>runtime</scope>
+			<optional>true</optional>
+		</dependency>
+
+		<!-- Test support for the actuator (brings the Spring Boot test stack) -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-actuator-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+
+		<!-- Integration testing against a Floci AWS emulator (junit-jupiter version
+		     managed by the Spring Boot Testcontainers BOM; the Floci module is not). -->
+		<dependency>
+			<groupId>org.testcontainers</groupId>
+			<artifactId>testcontainers-junit-jupiter</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>io.floci</groupId>
+			<artifactId>testcontainers-floci</artifactId>
+			<version>${testcontainers-floci.version}</version>
+			<scope>test</scope>
+		</dependency>
+		<!-- Azurite (Azure Storage emulator) container for the Azure Blob integration test -->
+		<dependency>
+			<groupId>org.testcontainers</groupId>
+			<artifactId>testcontainers-azure</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<!-- PostgreSQL container for the database (Liquibase + 3-pool) integration test -->
+		<dependency>
+			<groupId>org.testcontainers</groupId>
+			<artifactId>testcontainers-postgresql</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<!-- k3s (real Kubernetes API server) container for the leader-election integration test -->
+		<dependency>
+			<groupId>org.testcontainers</groupId>
+			<artifactId>testcontainers-k3s</artifactId>
+			<scope>test</scope>
+		</dependency>
+	</dependencies>
+
+	<build>
+		<pluginManagement>
+			<plugins>
+				<!-- IDE only: tells m2e (the Eclipse/VS Code Maven integration) to skip executions
+				     it cannot map onto its incremental build — the tidy `check` and the
+				     parent-managed CycloneDX `makeAggregateBom` — silencing the "Plugin execution
+				     not covered by lifecycle configuration" IDE markers. This is a pseudo-plugin
+				     that only m2e reads; CLI Maven ignores unreferenced pluginManagement entries,
+				     so nothing is downloaded or executed at build time. -->
+				<plugin>
+					<groupId>org.eclipse.m2e</groupId>
+					<artifactId>lifecycle-mapping</artifactId>
+					<version>1.0.0</version>
+					<configuration>
+						<lifecycleMappingMetadata>
+							<pluginExecutions>
+								<pluginExecution>
+									<pluginExecutionFilter>
+										<groupId>org.cyclonedx</groupId>
+										<artifactId>cyclonedx-maven-plugin</artifactId>
+										<versionRange>[0,)</versionRange>
+										<goals>
+											<goal>makeAggregateBom</goal>
+										</goals>
+									</pluginExecutionFilter>
+									<action>
+										<ignore/>
+									</action>
+								</pluginExecution>
+								<pluginExecution>
+									<pluginExecutionFilter>
+										<groupId>org.codehaus.mojo</groupId>
+										<artifactId>tidy-maven-plugin</artifactId>
+										<versionRange>[0,)</versionRange>
+										<goals>
+											<goal>check</goal>
+										</goals>
+									</pluginExecutionFilter>
+									<action>
+										<ignore/>
+									</action>
+								</pluginExecution>
+							</pluginExecutions>
+						</lifecycleMappingMetadata>
+					</configuration>
+				</plugin>
+			</plugins>
+		</pluginManagement>
+		<plugins>
+			<!-- Keep pom.xml canonically formatted/ordered. tidy:check fails the build on drift;
+			     run `mvn tidy:pom` to fix (the POM analogue of spotless:apply). -->
+			<plugin>
+				<groupId>org.codehaus.mojo</groupId>
+				<artifactId>tidy-maven-plugin</artifactId>
+				<version>${tidy-maven-plugin.version}</version>
+				<executions>
+					<execution>
+						<id>tidy-check-pom</id>
+						<phase>validate</phase>
+						<goals>
+							<goal>check</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-enforcer-plugin</artifactId>
+				<version>${maven-enforcer-plugin.version}</version>
+				<dependencies>
+					<!-- Provides requireEncoding, enforceBytecodeVersion, banDuplicateClasses, ... -->
+					<dependency>
+						<groupId>org.codehaus.mojo</groupId>
+						<artifactId>extra-enforcer-rules</artifactId>
+						<version>${extra-enforcer-rules.version}</version>
+					</dependency>
+				</dependencies>
+				<executions>
+					<execution>
+						<id>enforce-best-practices</id>
+						<goals>
+							<goal>enforce</goal>
+						</goals>
+						<configuration>
+							<rules>
+								<!-- Build JDK must be at least the compile target (tracks ${java.version}) -->
+								<requireJavaVersion>
+									<version>[${java.version},)</version>
+								</requireJavaVersion>
+								<!-- Ban only the commercial (paid) Oracle JDK, while still allowing
+								     Oracle's free OpenJDK builds. Both report java.vendor="Oracle
+								     Corporation", so vendor alone can't distinguish them; the commercial
+								     JDK is the one whose VM is branded "Java HotSpot(TM)" (every OpenJDK
+								     build reports "OpenJDK ... Server VM"). -->
+								<evaluateBeanshell>
+									<condition>!System.getProperty("java.vm.name").contains("Java HotSpot(TM)")</condition>
+									<message>The commercial Oracle JDK is not allowed (requires a paid subscription). Use an OpenJDK build instead — Amazon Corretto, Eclipse Temurin, Azul Zulu, Microsoft OpenJDK, Oracle OpenJDK etc.</message>
+								</evaluateBeanshell>
+								<!-- Maven must be the latest stable GA or newer -->
+								<requireMavenVersion>
+									<version>[${maven.version},)</version>
+								</requireMavenVersion>
+								<!-- Every plugin we declare must be pinned to an explicit, non-floating
+								     version. maven-site-plugin is excused: its version is supplied by
+								     Maven's built-in lifecycle defaults (not our POM) and is unused here. -->
+								<requirePluginVersions>
+									<banLatest>true</banLatest>
+									<banRelease>true</banRelease>
+									<banSnapshots>true</banSnapshots>
+									<unCheckedPluginList>org.apache.maven.plugins:maven-site-plugin</unCheckedPluginList>
+								</requirePluginVersions>
+								<!-- All transitive copies of a dependency must converge on one version -->
+								<dependencyConvergence/>
+								<!-- No SNAPSHOT dependencies allowed -->
+								<requireReleaseDeps>
+									<message>No SNAPSHOT dependencies are allowed.</message>
+								</requireReleaseDeps>
+								<!-- All project text must be UTF-8 (extra-enforcer-rules); pure-ASCII
+								     files are a valid UTF-8 subset, so accept them. Legacy non-UTF-8
+								     resources (e.g. the DOS-codepage "üdvözlet") are quarantined
+								     under src/main/resources/legacy/ and excluded from this check. -->
+								<requireEncoding>
+									<encoding>${project.build.sourceEncoding}</encoding>
+									<includes>src/**,pom.xml</includes>
+									<excludes>src/main/resources/legacy/**</excludes>
+									<acceptAsciiSubset>true</acceptAsciiSubset>
+								</requireEncoding>
+								<!-- No dependency may ship bytecode newer than our Java target (extra-enforcer-rules) -->
+								<enforceBytecodeVersion>
+									<maxJdkVersion>${java.version}</maxJdkVersion>
+								</enforceBytecodeVersion>
+								<!-- No two jars may ship the same class (extra-enforcer-rules) — catches
+								     shaded copies and overlapping "-all" jars, a real risk with two
+								     cloud SDK trees on the classpath. -->
+								<banDuplicateClasses/>
+							</rules>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+			<plugin>
+				<groupId>org.springframework.boot</groupId>
+				<artifactId>spring-boot-maven-plugin</artifactId>
+				<executions>
+					<execution>
+						<!-- Emit META-INF/build-info.properties for the actuator /info endpoint.
+						     'repackage' is still inherited from the parent's plugin management. -->
+						<goals>
+							<goal>build-info</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
+			<!-- Writes git.properties so /actuator/info shows the running commit.
+			     Spring Boot's parent already binds the `revision` execution (and sets
+			     generateGitPropertiesFile), so we declare NO execution of our own —
+			     that would run it twice. We only add configuration: restrict the shipped
+			     properties to traceability essentials (no committer email / message / host). -->
+			<plugin>
+				<groupId>io.github.git-commit-id</groupId>
+				<artifactId>git-commit-id-maven-plugin</artifactId>
+				<version>${git-commit-id-maven-plugin.version}</version>
+				<configuration>
+					<includeOnlyProperties>
+						<includeOnlyProperty>^git.branch$</includeOnlyProperty>
+						<includeOnlyProperty>^git.build.version$</includeOnlyProperty>
+						<includeOnlyProperty>^git.commit.id$</includeOnlyProperty>
+						<includeOnlyProperty>^git.commit.id.abbrev$</includeOnlyProperty>
+						<includeOnlyProperty>^git.commit.time$</includeOnlyProperty>
+						<includeOnlyProperty>^git.tags$</includeOnlyProperty>
+						<includeOnlyProperty>^git.dirty$</includeOnlyProperty>
+					</includeOnlyProperties>
+				</configuration>
+			</plugin>
+			<!-- SBOM (CycloneDX): the Spring Boot parent's managed execution writes
+			     target/classes/META-INF/sbom/application.cdx.json — packaged into the jar and
+			     served by the actuator /sbom endpoint — as soon as this plugin is declared. It
+			     binds to `package`, so `mvn test` is unaffected; the vuln scanners read this file. -->
+			<plugin>
+				<groupId>org.cyclonedx</groupId>
+				<artifactId>cyclonedx-maven-plugin</artifactId>
+				<version>${cyclonedx-maven-plugin.version}</version>
+			</plugin>
+			<!-- Code formatting as a build gate. palantir-java-format is opinionated and
+			     non-configurable (4-space, 120-col) — zero ruleset to maintain. Bound to
+			     process-sources so formatting is enforced BEFORE compilation.
+			     Fix violations with `mvn spotless:apply`. -->
+			<plugin>
+				<groupId>com.diffplug.spotless</groupId>
+				<artifactId>spotless-maven-plugin</artifactId>
+				<version>${spotless-maven-plugin.version}</version>
+				<configuration>
+					<java>
+						<palantirJavaFormat>
+							<version>${palantir-java-format.version}</version>
+						</palantirJavaFormat>
+					</java>
+				</configuration>
+				<executions>
+					<execution>
+						<id>spotless-check</id>
+						<phase>process-sources</phase>
+						<goals>
+							<goal>check</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
+			<!-- Resolve dependency jar paths into ${groupId:artifactId:type} properties so the
+			     surefire/failsafe argLines can load Mockito's agent explicitly instead of letting it
+			     self-attach at runtime (deprecated on modern JDKs). Version managed by parent. -->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-dependency-plugin</artifactId>
+				<executions>
+					<execution>
+						<id>resolve-dependency-paths</id>
+						<goals>
+							<goal>properties</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
+			<!-- Unit tests (surefire) and integration tests (failsafe) run separately.
+			     -javaagent loads the Mockito/byte-buddy agent at JVM start (no self-attach warning);
+			     -Xshare:off avoids the CDS warning from appending to the bootstrap classpath;
+			     @{...jacoco.args} is empty unless the `ci-reports` profile attaches the JaCoCo agent. -->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-surefire-plugin</artifactId>
+				<configuration>
+					<argLine>-javaagent:${org.mockito:mockito-core:jar} -Xshare:off @{surefire.jacoco.args}</argLine>
+				</configuration>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-failsafe-plugin</artifactId>
+				<configuration>
+					<argLine>-javaagent:${org.mockito:mockito-core:jar} -Xshare:off @{failsafe.jacoco.args}</argLine>
+				</configuration>
+				<executions>
+					<execution>
+						<goals>
+							<goal>integration-test</goal>
+							<goal>verify</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
+		</plugins>
+	</build>
+
+	<profiles>
+		<!-- Opt-in, NON-BLOCKING reports. Each goal is bound to the earliest phase its inputs
+		     are ready, so `mvn test -Pci-reports` yields the static + unit-test reports, and
+		     `mvn verify -Pci-reports` additionally yields the integration-test ones. No `check`
+		     goal anywhere, so nothing here ever fails the build.
+		     Activation: -Pci-reports or -Dci-reports. Combine freely with ci-gates (shared
+		     executions carry identical ids, so co-activation merges them instead of running twice). -->
+		<profile>
+			<id>ci-reports</id>
+			<activation>
+				<property>
+					<name>ci-reports</name>
+				</property>
+			</activation>
+			<build>
+				<plugins>
+					<!-- Coverage (JaCoCo): split unit / integration, then merged — report-only.
+					     Unit report binds to `test` (so it runs on `mvn test`); the integration
+					     report (post-integration-test) and the merge (verify) are only reached by
+					     `mvn verify`. Agents are attached via @{...jacoco.args} on surefire/failsafe. -->
+					<plugin>
+						<groupId>org.jacoco</groupId>
+						<artifactId>jacoco-maven-plugin</artifactId>
+						<version>${jacoco-maven-plugin.version}</version>
+						<configuration>
+							<!-- XML (for tooling / Sonar) + CSV only — NO HTML. JaCoCo's HTML report
+							     embeds the annotated source code and offers no way to omit it, so we
+							     don't generate HTML at all. XML and CSV contain coverage data only. -->
+							<formats>
+								<format>XML</format>
+								<format>CSV</format>
+							</formats>
+						</configuration>
+						<executions>
+							<execution>
+								<id>prepare-unit-agent</id>
+								<goals>
+									<goal>prepare-agent</goal>
+								</goals>
+								<configuration>
+									<destFile>${project.build.directory}/jacoco-output/unit.exec</destFile>
+									<propertyName>surefire.jacoco.args</propertyName>
+								</configuration>
+							</execution>
+							<execution>
+								<id>report-unit</id>
+								<phase>test</phase>
+								<goals>
+									<goal>report</goal>
+								</goals>
+								<configuration>
+									<dataFile>${project.build.directory}/jacoco-output/unit.exec</dataFile>
+									<outputDirectory>${project.reporting.outputDirectory}/jacoco-unit</outputDirectory>
+								</configuration>
+							</execution>
+							<execution>
+								<id>prepare-integration-agent</id>
+								<phase>pre-integration-test</phase>
+								<goals>
+									<goal>prepare-agent-integration</goal>
+								</goals>
+								<configuration>
+									<destFile>${project.build.directory}/jacoco-output/integration.exec</destFile>
+									<propertyName>failsafe.jacoco.args</propertyName>
+								</configuration>
+							</execution>
+							<execution>
+								<id>report-integration</id>
+								<phase>post-integration-test</phase>
+								<goals>
+									<goal>report</goal>
+								</goals>
+								<configuration>
+									<dataFile>${project.build.directory}/jacoco-output/integration.exec</dataFile>
+									<outputDirectory>${project.reporting.outputDirectory}/jacoco-integration</outputDirectory>
+								</configuration>
+							</execution>
+							<execution>
+								<id>merge-all</id>
+								<phase>verify</phase>
+								<goals>
+									<goal>merge</goal>
+								</goals>
+								<configuration>
+									<fileSets>
+										<fileSet>
+											<directory>${project.build.directory}/jacoco-output</directory>
+											<includes>
+												<include>*.exec</include>
+											</includes>
+										</fileSet>
+									</fileSets>
+									<destFile>${project.build.directory}/jacoco-output/merged.exec</destFile>
+								</configuration>
+							</execution>
+							<execution>
+								<id>report-merged</id>
+								<phase>verify</phase>
+								<goals>
+									<goal>report</goal>
+								</goals>
+								<configuration>
+									<dataFile>${project.build.directory}/jacoco-output/merged.exec</dataFile>
+									<outputDirectory>${project.reporting.outputDirectory}/jacoco-merged</outputDirectory>
+								</configuration>
+							</execution>
+						</executions>
+					</plugin>
+					<!-- SBOM vulnerability scan with BOTH Trivy and Grype (two independent opinions).
+					     They run at `verify` — the SBOM is built at `package` by the default-build
+					     cyclonedx plugin — so they need `mvn verify -Pci-reports`. Non-blocking: no fail
+					     flags, and a missing binary is tolerated (just prints a note). Base-image scanning
+					     is intentionally out of scope here — it belongs in a separate pipeline. CLI → sh. -->
+					<plugin>
+						<groupId>org.codehaus.mojo</groupId>
+						<artifactId>exec-maven-plugin</artifactId>
+						<version>${exec-maven-plugin.version}</version>
+						<executions>
+							<execution>
+								<id>trivy-sbom-scan</id>
+								<phase>verify</phase>
+								<goals>
+									<goal>exec</goal>
+								</goals>
+								<configuration>
+									<executable>sh</executable>
+									<arguments>
+										<argument>-c</argument>
+										<argument>trivy sbom --quiet --format json "${project.build.directory}/classes/META-INF/sbom/application.cdx.json" &gt; "${project.build.directory}/trivy-report.json" || echo "[reports] trivy not installed — skipping SBOM scan (non-blocking)"</argument>
+									</arguments>
+								</configuration>
+							</execution>
+							<execution>
+								<id>grype-sbom-scan</id>
+								<phase>verify</phase>
+								<goals>
+									<goal>exec</goal>
+								</goals>
+								<configuration>
+									<executable>sh</executable>
+									<arguments>
+										<argument>-c</argument>
+										<argument>grype "sbom:${project.build.directory}/classes/META-INF/sbom/application.cdx.json" -o json &gt; "${project.build.directory}/grype-report.json" || echo "[reports] grype not installed — skipping SBOM scan (non-blocking)"</argument>
+									</arguments>
+								</configuration>
+							</execution>
+						</executions>
+					</plugin>
+					<!-- Third-party license inventory (MojoHaus). Reads license metadata from the
+					     dependency POMs and writes THIRD-PARTY.txt. Report-only here (failOnMissing /
+					     failOnBlacklist = false); the `ci-gates` profile would add a forbidden-license gate.
+					     Bound to process-test-classes so it runs from `mvn test -Pci-reports`. -->
+					<plugin>
+						<groupId>org.codehaus.mojo</groupId>
+						<artifactId>license-maven-plugin</artifactId>
+						<version>${license-maven-plugin.version}</version>
+						<executions>
+							<execution>
+								<id>third-party-licenses</id>
+								<phase>process-test-classes</phase>
+								<goals>
+									<goal>add-third-party</goal>
+								</goals>
+								<configuration>
+									<failOnMissing>false</failOnMissing>
+									<failOnBlacklist>false</failOnBlacklist>
+									<outputDirectory>${project.build.directory}/license</outputDirectory>
+									<thirdPartyFilename>THIRD-PARTY.txt</thirdPartyFilename>
+								</configuration>
+							</execution>
+						</executions>
+					</plugin>
+					<!-- SpotBugs (+ FindSecBugs) static analysis — report-only here: the `spotbugs`
+					     goal writes target/spotbugsXml.xml and never fails. Works on Java 25 (4.10+).
+					     Bound to `test` (after compile) so it runs from `mvn test -Pci-reports`. -->
+					<plugin>
+						<groupId>com.github.spotbugs</groupId>
+						<artifactId>spotbugs-maven-plugin</artifactId>
+						<version>${spotbugs-maven-plugin.version}</version>
+						<configuration>
+							<effort>Max</effort>
+							<threshold>Medium</threshold>
+							<plugins>
+								<plugin>
+									<groupId>com.h3xstream.findsecbugs</groupId>
+									<artifactId>findsecbugs-plugin</artifactId>
+									<version>${findsecbugs.version}</version>
+								</plugin>
+							</plugins>
+						</configuration>
+						<executions>
+							<execution>
+								<id>spotbugs-report</id>
+								<phase>test</phase>
+								<goals>
+									<goal>spotbugs</goal>
+								</goals>
+							</execution>
+						</executions>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
+		<profile>
+			<id>ci-gates</id>
+			<!-- Blocking CI gates — SELF-SUFFICIENT: `mvn verify -Pci-gates` (or -Dci-gates) is a
+			     complete, correct gate run on its own. The SBOM comes from the default build, the
+			     license/SpotBugs gates generate their own inputs, and the JaCoCo data executions
+			     below are repeated from ci-reports WITH IDENTICAL IDS, so running both profiles
+			     together merges them instead of instrumenting twice. Add ci-reports when the
+			     report artifacts (coverage XML/CSV, scan JSONs) are wanted as well. Each gate
+			     FAILS the build. The scanners run without the `|| echo` tolerance, so a MISSING
+			     binary also fails — CI images must have trivy + grype installed. -->
+			<activation>
+				<property>
+					<name>ci-gates</name>
+				</property>
+			</activation>
+			<build>
+				<plugins>
+					<!-- Coverage threshold on the merged (unit+integration) exec. The three data
+					     executions (agents + merge) mirror ci-reports exactly — same ids. -->
+					<plugin>
+						<groupId>org.jacoco</groupId>
+						<artifactId>jacoco-maven-plugin</artifactId>
+						<version>${jacoco-maven-plugin.version}</version>
+						<executions>
+							<execution>
+								<id>prepare-unit-agent</id>
+								<goals>
+									<goal>prepare-agent</goal>
+								</goals>
+								<configuration>
+									<destFile>${project.build.directory}/jacoco-output/unit.exec</destFile>
+									<propertyName>surefire.jacoco.args</propertyName>
+								</configuration>
+							</execution>
+							<execution>
+								<id>prepare-integration-agent</id>
+								<phase>pre-integration-test</phase>
+								<goals>
+									<goal>prepare-agent-integration</goal>
+								</goals>
+								<configuration>
+									<destFile>${project.build.directory}/jacoco-output/integration.exec</destFile>
+									<propertyName>failsafe.jacoco.args</propertyName>
+								</configuration>
+							</execution>
+							<execution>
+								<id>merge-all</id>
+								<phase>verify</phase>
+								<goals>
+									<goal>merge</goal>
+								</goals>
+								<configuration>
+									<fileSets>
+										<fileSet>
+											<directory>${project.build.directory}/jacoco-output</directory>
+											<includes>
+												<include>*.exec</include>
+											</includes>
+										</fileSet>
+									</fileSets>
+									<destFile>${project.build.directory}/jacoco-output/merged.exec</destFile>
+								</configuration>
+							</execution>
+							<execution>
+								<id>coverage-check</id>
+								<phase>verify</phase>
+								<goals>
+									<goal>check</goal>
+								</goals>
+								<configuration>
+									<dataFile>${project.build.directory}/jacoco-output/merged.exec</dataFile>
+									<rules>
+										<rule>
+											<element>BUNDLE</element>
+											<limits>
+												<limit>
+													<counter>INSTRUCTION</counter>
+													<value>COVEREDRATIO</value>
+													<!-- The fleet standard minimum for deliveries. -->
+													<minimum>0.80</minimum>
+												</limit>
+											</limits>
+										</rule>
+									</rules>
+								</configuration>
+							</execution>
+						</executions>
+					</plugin>
+					<!-- Vulnerability gates: fail on HIGH/CRITICAL. No tolerance — trivy & grype
+					     MUST be present on the CI image. -->
+					<plugin>
+						<groupId>org.codehaus.mojo</groupId>
+						<artifactId>exec-maven-plugin</artifactId>
+						<version>${exec-maven-plugin.version}</version>
+						<executions>
+							<execution>
+								<id>trivy-gate</id>
+								<phase>verify</phase>
+								<goals>
+									<goal>exec</goal>
+								</goals>
+								<configuration>
+									<executable>trivy</executable>
+									<arguments>
+										<argument>sbom</argument>
+										<argument>--quiet</argument>
+										<argument>--exit-code</argument>
+										<argument>1</argument>
+										<argument>--severity</argument>
+										<argument>HIGH,CRITICAL</argument>
+										<argument>${project.build.directory}/classes/META-INF/sbom/application.cdx.json</argument>
+									</arguments>
+								</configuration>
+							</execution>
+							<execution>
+								<id>grype-gate</id>
+								<phase>verify</phase>
+								<goals>
+									<goal>exec</goal>
+								</goals>
+								<configuration>
+									<executable>grype</executable>
+									<arguments>
+										<argument>sbom:${project.build.directory}/classes/META-INF/sbom/application.cdx.json</argument>
+										<argument>--fail-on</argument>
+										<argument>high</argument>
+									</arguments>
+								</configuration>
+							</execution>
+						</executions>
+					</plugin>
+					<!-- License gate: fail on forbidden licenses. Starts conservative (AGPL family);
+					     curate excludedLicenses + licenseMerges as the dependency set grows (license
+					     names appear under many spellings — see THIRD-PARTY.txt). -->
+					<plugin>
+						<groupId>org.codehaus.mojo</groupId>
+						<artifactId>license-maven-plugin</artifactId>
+						<version>${license-maven-plugin.version}</version>
+						<executions>
+							<execution>
+								<id>license-gate</id>
+								<phase>verify</phase>
+								<goals>
+									<goal>add-third-party</goal>
+								</goals>
+								<configuration>
+									<failOnMissing>false</failOnMissing>
+									<failOnBlacklist>true</failOnBlacklist>
+									<outputDirectory>${project.build.directory}/license</outputDirectory>
+									<excludedLicenses>AGPL-3.0,GNU Affero General Public License v3.0,GNU Affero General Public License v3.0 or later</excludedLicenses>
+								</configuration>
+							</execution>
+						</executions>
+					</plugin>
+					<!-- SpotBugs (+ FindSecBugs) gate — fails the build on findings at/above the threshold. -->
+					<plugin>
+						<groupId>com.github.spotbugs</groupId>
+						<artifactId>spotbugs-maven-plugin</artifactId>
+						<version>${spotbugs-maven-plugin.version}</version>
+						<configuration>
+							<effort>Max</effort>
+							<threshold>Medium</threshold>
+							<plugins>
+								<plugin>
+									<groupId>com.h3xstream.findsecbugs</groupId>
+									<artifactId>findsecbugs-plugin</artifactId>
+									<version>${findsecbugs.version}</version>
+								</plugin>
+							</plugins>
+						</configuration>
+						<executions>
+							<execution>
+								<id>spotbugs-gate</id>
+								<phase>verify</phase>
+								<goals>
+									<goal>check</goal>
+								</goals>
+							</execution>
+						</executions>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
+	</profiles>
+</project>

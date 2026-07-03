@@ -1,0 +1,47 @@
+HELP.md
+target/
+.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+### STS ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+
+### IntelliJ IDEA ###
+.idea
+*.iws
+*.iml
+*.ipr
+
+### NetBeans ###
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+build/
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+### VS Code ###
+.vscode/
+
+### OS / misc ###
+.DS_Store
+Thumbs.db
+*.log
+
+### maven-git-versioning-extension (generated per build) ###
+.git-versioned-pom.xml
+
+### runtime logs (logback file appender) ###
+/logs/
+
+### local k3s kubeconfig output (compose `k8s` profile) ###
+/k3s-output/

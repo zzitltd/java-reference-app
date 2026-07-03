@@ -1,0 +1,35 @@
+# Test-time configuration. NOTE: this shadows src/main/resources/application.yaml on the
+# test classpath (same resource name → not merged), so it must be self-contained — the
+# cloud-off / db-off defaults and the autoconfiguration excludes below must be repeated
+# here. With everything off, the plain unit-test context loads without any external
+# settings. Integration tests activate the `aws` / `azure` / `db` profile (whose
+# application-{aws,azure,db}.yaml still applies from the main classpath) and inject the
+# emulator/container endpoints via @DynamicPropertySource.
+spring:
+  application:
+    name: reference-app
+  docker:
+    compose:
+      enabled: false
+  autoconfigure:
+    # See src/main/resources/application.yaml — DatabaseConfiguration owns the runtime
+    # pools; Liquibase autoconfiguration backs off while no DataSource beans exist.
+    exclude:
+      - org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration
+  cloud:
+    aws:
+      s3:
+        enabled: false
+    azure:
+      storage:
+        blob:
+          enabled: false
+
+cloud:
+  provider: none
+
+db:
+  enabled: false
+
+k8s:
+  enabled: false

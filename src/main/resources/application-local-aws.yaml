@@ -1,0 +1,27 @@
+# Local AWS development profile (profile group: local-aws = this + `aws`).
+# Targets a Floci AWS emulator (LocalStack-compatible) running on localhost:4566.
+# Activate with:  --spring.profiles.active=local-aws   or   SPRING_PROFILES_ACTIVE=local-aws
+logging:
+  develop:
+    # Workstation convenience: also keep a rolling plaintext file under ./logs.
+    enabled: true
+spring:
+  docker:
+    compose:
+      # Auto-start/stop the Floci emulator (compose.yaml, compose profile `aws`)
+      # while this profile is active.
+      enabled: true
+      profiles:
+        active: aws
+  cloud:
+    aws:
+      region:
+        static: eu-central-1
+      credentials:
+        # Dummy credentials — Floci does not validate them.
+        access-key: local
+        secret-key: local
+      s3:
+        endpoint: http://localhost:4566
+        # Required when talking to a single-endpoint S3 emulator.
+        path-style-access-enabled: true

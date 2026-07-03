@@ -1,0 +1,10 @@
+# AWS provider profile: activates the S3-backed ObjectStorage adapter and the
+# Spring Cloud AWS S3 autoconfiguration. Region and credentials come from the usual
+# AWS chain (IAM role, env vars, ...); for a workstation + emulator use `local-aws`.
+cloud:
+  provider: aws
+spring:
+  cloud:
+    aws:
+      s3:
+        enabled: true

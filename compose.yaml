@@ -1,0 +1,81 @@
+# Local emulators/services for the `local-*` Spring profiles.
+# Auto-started/stopped by spring-boot-docker-compose when running with
+#   --spring.profiles.active=local-aws    (Floci,      compose profile `aws`)
+#   --spring.profiles.active=local-azure  (Azurite,    compose profile `azure`)
+#   --spring.profiles.active=local-db     (PostgreSQL, compose profile `db`)
+#   --spring.profiles.active=local-k8s    (k3s,        compose profile `k8s`)
+# Each Spring profile selects its service via spring.docker.compose.profiles.active,
+# so only the one you need is started. Healthchecks are defined so Spring waits for
+# actual readiness, not just container start.
+#
+# No /var/run/docker.sock mount on Floci: that is only needed for compute services
+# (Lambda/ECS); reference-app only uses object storage.
+services:
+  floci:
+    image: floci/floci:1.5.29
+    profiles: ["aws"]
+    ports:
+      - "4566:4566"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:3.35.0
+    profiles: ["azure"]
+    # --skipApiVersionCheck: the Azure SDK managed by the Spring Cloud Azure BOM speaks a
+    # storage API version newer than Azurite knows; this is Azure's documented workaround
+    # (same flag in ReferenceAzureBlobIT). Drop it once Azurite catches up.
+    command: azurite --blobHost 0.0.0.0 --queueHost 0.0.0.0 --tableHost 0.0.0.0 --skipApiVersionCheck
+    ports:
+      - "10000:10000"
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "10000"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+  postgres:
+    image: postgres:18.4
+    profiles: ["db"]
+    # Opt OUT of Spring Boot's docker-compose service connection: it would hand the
+    # SUPERUSER credentials below to the autoconfigured Liquibase/DataSources,
+    # bypassing the least-privilege users the app is configured with.
+    labels:
+      org.springframework.boot.service-connection: false
+    environment:
+      POSTGRES_DB: reference
+      # Superuser password — local compose only; the app never uses this account.
+      POSTGRES_PASSWORD: postgres-local
+    ports:
+      - "5432:5432"
+    volumes:
+      # First start: creates the expected role/permission layout (groups, app users,
+      # schema, default privileges) — see db/init/01-roles.sql.
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d reference"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+  k3s:
+    # A REAL single-node Kubernetes API server for the `local-k8s` profile.
+    image: rancher/k3s:v1.36.2-k3s1
+    profiles: ["k8s"]
+    # k3s runs containerd inside the container — it needs privileged mode.
+    privileged: true
+    command: server --disable=traefik --disable=servicelb --disable=metrics-server
+    environment:
+      # Write an admin kubeconfig (server: https://127.0.0.1:6443, matching the port
+      # mapping below) where the app can read it — see application-local-k8s.yaml.
+      K3S_KUBECONFIG_OUTPUT: /output/kubeconfig.yaml
+      K3S_KUBECONFIG_MODE: "666"
+    ports:
+      - "6443:6443"
+    volumes:
+      - ./k3s-output:/output
+    healthcheck:
+      test: ["CMD", "kubectl", "get", "--raw", "/readyz"]
+      interval: 5s
+      timeout: 4s
+      retries: 24

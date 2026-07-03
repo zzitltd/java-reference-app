@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<extensions xmlns="http://maven.apache.org/EXTENSIONS/1.0.0"
+            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+            xsi:schemaLocation="http://maven.apache.org/EXTENSIONS/1.0.0 https://maven.apache.org/xsd/core-extensions-1.0.0.xsd">
+    <!-- Git-based project versioning (config in maven-git-versioning-extension.xml).
+         Loaded as a CORE extension so it can rewrite the version before the build runs.
+         Version is pinned (no floating) — same discipline as maven-enforcer's
+         requirePluginVersions. extensions.xml cannot read POM <properties>, so the
+         version is pinned literally here. -->
+    <extension>
+        <groupId>me.qoomon</groupId>
+        <artifactId>maven-git-versioning-extension</artifactId>
+        <version>9.12.1</version>
+    </extension>
+</extensions>

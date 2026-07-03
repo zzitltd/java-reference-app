@@ -1,0 +1,21 @@
+# Local Azure development profile (profile group: local-azure = this + `azure`).
+# Targets an Azurite Azure Storage emulator running on localhost:10000.
+# Activate with:  --spring.profiles.active=local-azure   or   SPRING_PROFILES_ACTIVE=local-azure
+logging:
+  develop:
+    # Workstation convenience: also keep a rolling plaintext file under ./logs.
+    enabled: true
+spring:
+  docker:
+    compose:
+      # Auto-start/stop the Azurite emulator (compose.yaml, compose profile `azure`)
+      # while this profile is active.
+      enabled: true
+      profiles:
+        active: azure
+  cloud:
+    azure:
+      storage:
+        blob:
+          # Azurite's well-known dev account — a fixed, public emulator credential.
+          connection-string: DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;

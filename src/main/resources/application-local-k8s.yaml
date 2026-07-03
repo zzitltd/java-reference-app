@@ -1,0 +1,17 @@
+# Local Kubernetes development profile (profile group: local-k8s = this + `k8s`).
+# Targets a compose-managed single-node k3s — a REAL Kubernetes API server — on
+# localhost:6443, which writes an admin kubeconfig to ./k3s-output/ (gitignored).
+# Activate with:  --spring.profiles.active=local-k8s   or   SPRING_PROFILES_ACTIVE=local-k8s
+logging:
+  develop:
+    enabled: true
+spring:
+  docker:
+    compose:
+      # Auto-start/stop the k3s server (compose.yaml, compose profile `k8s`)
+      # while this profile is active.
+      enabled: true
+      profiles:
+        active: k8s
+k8s:
+  kubeconfig: k3s-output/kubeconfig.yaml
