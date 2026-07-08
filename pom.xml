@@ -41,6 +41,13 @@
 		<logstash-logback-encoder.version>9.0</logstash-logback-encoder.version>
 		<!-- Kubernetes API client (leader election via Lease) — standalone, not BOM-managed -->
 		<fabric8.version>7.8.0</fabric8.version>
+		<!-- Kafka example: kafka-clients itself is managed by the Spring Boot parent; these two
+		     are not. protobuf-java carries the message contract runtime (the matching protoc is
+		     pinned to the SAME version by the protobuf-maven-plugin below); aws-msk-iam-auth adds
+		     the AWS_MSK_IAM SASL mechanism for Amazon MSK (config-only — see
+		     application-kafka-msk-iam.yaml). -->
+		<protobuf.version>4.35.1</protobuf.version>
+		<aws-msk-iam-auth.version>2.3.7</aws-msk-iam-auth.version>
 		<!-- Floci AWS emulator — Testcontainers module for integration tests -->
 		<testcontainers-floci.version>2.11.0</testcontainers-floci.version>
 		<!-- Testcontainers BOM (not managed by the Spring Boot 4.1 parent) -->
@@ -59,6 +66,7 @@
 		<spotbugs-maven-plugin.version>4.10.2.0</spotbugs-maven-plugin.version>
 		<findsecbugs.version>1.14.0</findsecbugs.version>
 		<tidy-maven-plugin.version>1.4.0</tidy-maven-plugin.version>
+		<protobuf-maven-plugin.version>3.1.0</protobuf-maven-plugin.version>
 
 		<!-- JaCoCo agent argLines: empty by default so surefire/failsafe run un-instrumented;
 		     the `ci-reports` profile's jacoco:prepare-agent fills them via late (@{...}) binding. -->
@@ -229,6 +237,30 @@
 			<scope>runtime</scope>
 		</dependency>
 
+		<!-- Kafka example — OPTIONAL like the others: gated on kafka.enabled (default false).
+		     The plain Apache client, deliberately NOT spring-kafka (see hu.zzit.reference.kafka
+		     and README §14); the version is managed by the Spring Boot parent. -->
+		<dependency>
+			<groupId>org.apache.kafka</groupId>
+			<artifactId>kafka-clients</artifactId>
+		</dependency>
+		<!-- The Kafka message contract: protobuf runtime for the classes protoc generates from
+		     src/main/protobuf (see the protobuf-maven-plugin below). -->
+		<dependency>
+			<groupId>com.google.protobuf</groupId>
+			<artifactId>protobuf-java</artifactId>
+			<version>${protobuf.version}</version>
+		</dependency>
+		<!-- Amazon MSK IAM auth: registers the AWS_MSK_IAM SASL mechanism with the generic
+		     client. Referenced only from configuration strings (application-kafka-msk-iam.yaml),
+		     hence runtime scope — there is no MSK-specific code. -->
+		<dependency>
+			<groupId>software.amazon.msk</groupId>
+			<artifactId>aws-msk-iam-auth</artifactId>
+			<version>${aws-msk-iam-auth.version}</version>
+			<scope>runtime</scope>
+		</dependency>
+
 		<!-- Relational database example — OPTIONAL like the cloud SDKs: gated on db.enabled
 		     (default false), pools built by DatabaseConfiguration, migration by Boot's
 		     autoconfigured Liquibase over the primary pool. -->
@@ -291,6 +323,12 @@
 		<dependency>
 			<groupId>org.testcontainers</groupId>
 			<artifactId>testcontainers-k3s</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<!-- Apache Kafka (KRaft) container for the Kafka integration test -->
+		<dependency>
+			<groupId>org.testcontainers</groupId>
+			<artifactId>testcontainers-kafka</artifactId>
 			<scope>test</scope>
 		</dependency>
 	</dependencies>
@@ -503,6 +541,27 @@
 					</execution>
 				</executions>
 			</plugin>
+			<!-- Protobuf codegen for the Kafka message contract: compiles src/main/protobuf/*.proto
+			     to Java at generate-sources (into target/generated-sources — nothing generated is
+			     ever committed). protoc is fetched from Maven Central pinned to ${protobuf.version},
+			     so the schema compiler and the protobuf-java runtime can never drift apart.
+			     NOTE: this is io.github.ascopes' plugin — the org.xolstice one is unmaintained. -->
+			<plugin>
+				<groupId>io.github.ascopes</groupId>
+				<artifactId>protobuf-maven-plugin</artifactId>
+				<version>${protobuf-maven-plugin.version}</version>
+				<configuration>
+					<protocVersion>${protobuf.version}</protocVersion>
+				</configuration>
+				<executions>
+					<execution>
+						<id>generate-protobuf</id>
+						<goals>
+							<goal>generate</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
 			<!-- Resolve dependency jar paths into ${groupId:artifactId:type} properties so the
 			     surefire/failsafe argLines can load Mockito's agent explicitly instead of letting it
 			     self-attach at runtime (deprecated on modern JDKs). Version managed by parent. -->
@@ -579,6 +638,12 @@
 								<format>XML</format>
 								<format>CSV</format>
 							</formats>
+							<!-- protobuf-GENERATED classes (see the protobuf-maven-plugin): thousands
+							     of machine-written instructions nobody hand-tests — they would distort
+							     the ratio. Mirrored in ci-gates so both profiles measure the same code. -->
+							<excludes>
+								<exclude>hu/zzit/reference/kafka/event/**</exclude>
+							</excludes>
 						</configuration>
 						<executions>
 							<execution>
@@ -729,6 +794,8 @@
 						<configuration>
 							<effort>Max</effort>
 							<threshold>Medium</threshold>
+							<!-- Exclusions (generated protobuf classes) — see spotbugs-exclude.xml -->
+							<excludeFilterFile>spotbugs-exclude.xml</excludeFilterFile>
 							<plugins>
 								<plugin>
 									<groupId>com.h3xstream.findsecbugs</groupId>
@@ -773,6 +840,13 @@
 						<groupId>org.jacoco</groupId>
 						<artifactId>jacoco-maven-plugin</artifactId>
 						<version>${jacoco-maven-plugin.version}</version>
+						<configuration>
+							<!-- Same exclusion as ci-reports: protobuf-generated classes stay out of
+							     the instrumentation AND the coverage-check ratio. -->
+							<excludes>
+								<exclude>hu/zzit/reference/kafka/event/**</exclude>
+							</excludes>
+						</configuration>
 						<executions>
 							<execution>
 								<id>prepare-unit-agent</id>
@@ -912,6 +986,8 @@
 						<configuration>
 							<effort>Max</effort>
 							<threshold>Medium</threshold>
+							<!-- Exclusions (generated protobuf classes) — see spotbugs-exclude.xml -->
+							<excludeFilterFile>spotbugs-exclude.xml</excludeFilterFile>
 							<plugins>
 								<plugin>
 									<groupId>com.h3xstream.findsecbugs</groupId>

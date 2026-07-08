@@ -1,0 +1,38 @@
+// Message contract for the Kafka example (hu.zzit.reference.kafka, README §14).
+//
+// This file IS the schema "registry": producer and consumer are held compatible by
+// sharing the contract at BUILD time — protoc (pinned to the protobuf-java version by
+// the protobuf-maven-plugin) generates the Java classes under
+// hu.zzit.reference.kafka.event into target/generated-sources; nothing generated is
+// ever committed. Consumers in other services copy this file (or depend on a shared
+// contract artifact) and generate their own bindings, in any language.
+//
+// Evolution rules — protobuf's compatibility model, follow them and old and new
+// readers/writers interoperate freely:
+//   - NEVER change or reuse the NUMBER of a field that has been in production; retire
+//     fields with `reserved 4;` / `reserved "created_at";` instead of deleting them.
+//   - ADDING fields is both backward and forward compatible: old readers skip unknown
+//     fields, new readers see the default value where the writer was older.
+//   - Renaming a field is wire-safe (numbers matter, names don't) but breaks generated
+//     APIs and JSON mappings — treat it as a code-level breaking change.
+//   - Never change a field's type; add a new field and migrate instead.
+
+syntax = "proto3";
+
+package hu.zzit.reference.kafka;
+
+import "google/protobuf/timestamp.proto";
+
+option java_package = "hu.zzit.reference.kafka.event";
+option java_multiple_files = true;
+
+// One greeting was issued. `id` is producer-generated and unique: the example's
+// delivery guarantee is at-least-once (see GreetingEventConsumer), so a consumer may
+// see the same event twice and must deduplicate on `id` if processing isn't naturally
+// idempotent.
+message GreetingEvent {
+  string id = 1;
+  string name = 2;
+  string message = 3;
+  google.protobuf.Timestamp created_at = 4;
+}

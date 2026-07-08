@@ -1,0 +1,17 @@
+# Amazon MSK with IAM auth (profile group: kafka-msk-iam = this + `kafka`). Auth is
+# PURE configuration on top of the generic client — no MSK-specific code exists: the
+# aws-msk-iam-auth jar (runtime dependency) registers the AWS_MSK_IAM SASL mechanism,
+# and credentials flow through the standard AWS provider chain (IRSA / pod identity /
+# env vars), exactly like the S3 adapter. Point KAFKA_BOOTSTRAP_SERVERS at the
+# cluster's IAM bootstrap endpoint (port 9098) and grant the role kafka-cluster:*
+# permissions for this topic/group.
+#
+# NOT integration-testable locally: no MSK emulator exists. The property assembly below
+# is unit-tested (KafkaMskIamProfileTest); the handshake itself must be verified against
+# a real cluster.
+kafka:
+  properties:
+    "[security.protocol]": SASL_SSL
+    "[sasl.mechanism]": AWS_MSK_IAM
+    "[sasl.jaas.config]": software.amazon.msk.auth.iam.IAMLoginModule required;
+    "[sasl.client.callback.handler.class]": software.amazon.msk.auth.iam.IAMClientCallbackHandler

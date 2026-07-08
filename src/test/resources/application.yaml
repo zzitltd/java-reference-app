@@ -8,6 +8,11 @@
 spring:
   application:
     name: reference-app
+  profiles:
+    group:
+      # Repeated from the main application.yaml (shadowed, see above) so profile-group
+      # behavior is testable: KafkaMskIamProfileTest asserts this expansion.
+      kafka-msk-iam: kafka
   docker:
     compose:
       enabled: false
@@ -32,4 +37,7 @@ db:
   enabled: false
 
 k8s:
+  enabled: false
+
+kafka:
   enabled: false

@@ -5,11 +5,15 @@ spring:
     group:
       # Convenience for workstations: `local-aws` = `aws` + the emulator bits; same for
       # azure/k8s. Caution: group members are applied LAST and win on overlapping keys —
-      # groups only compose cleanly over disjoint ones (`local-db` is self-contained
-      # for exactly that reason).
+      # groups only compose cleanly over disjoint ones (`local-db` and `local-kafka` are
+      # self-contained for exactly that reason: their members' ${ENV} placeholders would
+      # override the localhost values).
       local-aws: aws
       local-azure: azure
       local-k8s: k8s
+      # `kafka-msk-iam` only ADDS kafka.properties.* entries (disjoint from the member's
+      # keys), so the group composes cleanly.
+      kafka-msk-iam: kafka
   lifecycle:
     # Drain budget for graceful shutdown — must fit inside Kubernetes' termination
     # grace period (default 30s) with headroom for preStop hooks and JVM exit.
@@ -59,6 +63,12 @@ db:
 # profile turns it on (in-cluster service account); `local-k8s` targets the
 # compose-managed k3s instead.
 k8s:
+  enabled: false
+
+# Kafka example (native clients + protobuf contract) — off by default. The `kafka`
+# profile turns it on (broker list from the environment), `kafka-msk-iam` layers Amazon
+# MSK IAM auth on top of it, `local-kafka` targets the compose-managed broker instead.
+kafka:
   enabled: false
 
 logging:

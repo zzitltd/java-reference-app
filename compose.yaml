@@ -4,6 +4,7 @@
 #   --spring.profiles.active=local-azure  (Azurite,    compose profile `azure`)
 #   --spring.profiles.active=local-db     (PostgreSQL, compose profile `db`)
 #   --spring.profiles.active=local-k8s    (k3s,        compose profile `k8s`)
+#   --spring.profiles.active=local-kafka  (Kafka,      compose profile `kafka`)
 # Each Spring profile selects its service via spring.docker.compose.profiles.active,
 # so only the one you need is started. Healthchecks are defined so Spring waits for
 # actual readiness, not just container start.
@@ -57,6 +58,22 @@ services:
       test: ["CMD-SHELL", "pg_isready -U postgres -d reference"]
       interval: 5s
       timeout: 3s
+      retries: 12
+  kafka:
+    # Single-node Apache Kafka in KRaft mode (no ZooKeeper — KRaft is the only mode
+    # since Kafka 4.0). The image's default standalone config already listens on 9092
+    # and advertises PLAINTEXT://localhost:9092 — exactly the port mapping below — so
+    # no listener env vars are needed. Tag pinned to match ReferenceKafkaIT.
+    image: apache/kafka:4.2.1
+    profiles: ["kafka"]
+    ports:
+      - "9092:9092"
+    healthcheck:
+      # The broker speaks only the Kafka protocol, so probe with the bundled CLI
+      # (each probe starts a JVM — hence the generous timeout).
+      test: ["CMD", "/opt/kafka/bin/kafka-broker-api-versions.sh", "--bootstrap-server", "localhost:9092"]
+      interval: 5s
+      timeout: 10s
       retries: 12
   k3s:
     # A REAL single-node Kubernetes API server for the `local-k8s` profile.

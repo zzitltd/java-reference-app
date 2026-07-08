@@ -30,13 +30,14 @@ If you are an **AI agent** asked to bring another project in line with this one,
   - [11. Optional multi-cloud: the ObjectStorage port (+ retries)](#11-optional-multi-cloud-the-objectstorage-port--retries)
   - [12. Optional database: platform-provisioned roles, routed pools, Liquibase](#12-optional-database-platform-provisioned-roles-routed-pools-liquibase)
   - [13. Optional Kubernetes API: leader election over a Lease](#13-optional-kubernetes-api-leader-election-over-a-lease)
-  - [14. The `local-*` profiles](#14-the-local--profiles)
-  - [15. Logging](#15-logging)
-  - [16. Graceful shutdown](#16-graceful-shutdown)
-  - [17. The `ci-reports` profile (non-blocking)](#17-the-ci-reports-profile-non-blocking)
-  - [18. The `ci-gates` profile (blocking gates)](#18-the-ci-gates-profile-blocking-gates)
-  - [19. SBOM + vulnerability scanning](#19-sbom--vulnerability-scanning)
-  - [20. The container image](#20-the-container-image)
+  - [14. Optional Kafka: native clients, protobuf contract, MSK via config](#14-optional-kafka-native-clients-protobuf-contract-msk-via-config)
+  - [15. The `local-*` profiles](#15-the-local--profiles)
+  - [16. Logging](#16-logging)
+  - [17. Graceful shutdown](#17-graceful-shutdown)
+  - [18. The `ci-reports` profile (non-blocking)](#18-the-ci-reports-profile-non-blocking)
+  - [19. The `ci-gates` profile (blocking gates)](#19-the-ci-gates-profile-blocking-gates)
+  - [20. SBOM + vulnerability scanning](#20-sbom--vulnerability-scanning)
+  - [21. The container image](#21-the-container-image)
 - [Environment variables](#environment-variables)
 - [Build pipeline matrix](#build-pipeline-matrix)
 - [Project layout](#project-layout)
@@ -61,6 +62,7 @@ Use the wrapper (`./mvnw`) — it pins Maven 3.9.16 to match the enforcer. On Wi
 | Run on **Azure** locally (Azurite emulator auto-started) | `./mvnw spring-boot:run -Dspring-boot.run.profiles=local-azure` |
 | Run with **PostgreSQL** locally (auto-started, migrated) | `./mvnw spring-boot:run -Dspring-boot.run.profiles=local-db` |
 | Run with **Kubernetes** locally (k3s auto-started) | `./mvnw spring-boot:run -Dspring-boot.run.profiles=local-k8s` |
+| Run with **Kafka** locally (broker auto-started) | `./mvnw spring-boot:run -Dspring-boot.run.profiles=local-kafka` |
 | Run the packaged jar | `java -jar target/reference-app-*.jar` |
 | Switch console logs to JSON | add `--logging.json.enabled=true` |
 | Build the image from a host-built jar | `docker build --target app-prebuilt -t reference-app .` |
@@ -296,28 +298,83 @@ jobs, cleanup tasks, …). Off by default (`k8s.enabled=false`); the `k8s` profi
   `ReferenceLeaderElectionIT` proves the behavior against a Testcontainers k3s: the sole candidate
   acquires the Lease, and the Lease object names it as holder.
 
-### 14. The `local-*` profiles
+### 14. Optional Kafka: native clients, protobuf contract, MSK via config
+
+Event streaming with three deliberate choices baked in. Off by default (`kafka.enabled=false`); the
+`kafka` profile activates it and reads the broker list from `KAFKA_BOOTSTRAP_SERVERS`. Everything
+lives in `hu.zzit.reference.kafka`.
+
+**Choice 1 — the plain Apache `kafka-clients`, not spring-kafka.** The raw client is the stable,
+universal API; its version is even managed by the Spring Boot parent. The two things a wrapper would
+add are a handful of explicit lines here instead of framework behavior to debug:
+
+- **`GreetingEventProducer`**: `KafkaProducer` *is* thread-safe, so the app shares one long-lived
+  instance — `acks=all` + idempotence spelled out, sends keyed by name (per-key ordering), a bounded
+  `close()` that flushes on shutdown. `publish()` returns a future: block on it when the event must
+  not be lost, drop it for fire-and-forget.
+- **`GreetingEventConsumer`**: `KafkaConsumer` is *not* thread-safe, so one `SmartLifecycle`-managed
+  thread owns the poll loop end to end; `stop()` interrupts a blocking poll with `wakeup()` (the one
+  cross-thread-safe method) inside the graceful-shutdown drain budget, and the close leaves the
+  group explicitly so partitions rebalance immediately on rollouts. Delivery is **at-least-once**:
+  auto-commit off, offsets committed *after* the batch is processed — consumers deduplicate on the
+  event's producer-generated `id`. Records are fetched as raw *bytes* and parsed per record, so a
+  **poison pill** is logged and skipped instead of wedging the partition (a throwing `Deserializer`
+  inside `poll()` re-fetches the same broken record forever). Handler failures are logged and
+  skipped too — pair anything unskippable with a retry or dead-letter topic.
+- The app-side seam is the **`GreetingEventHandler`** bean — replace the default logging one.
+
+**Choice 2 — schema support via a protobuf contract, no registry.** The contract is
+`src/main/protobuf/greeting_event.proto`; protoc (pinned to the protobuf-java version by the
+`protobuf-maven-plugin`) generates the Java at build time under `target/generated-sources` — nothing
+generated is committed, and generated classes are excluded from coverage. Compatibility is enforced
+at *build* time by sharing the `.proto` (evolution rules are documented in the file: field numbers
+are forever, adding fields is safe both ways); the wire format is the plain protobuf encoding with
+**no registry framing** (magic byte + schema id), so no schema-registry infrastructure exists to
+run, secure, or outage-manage. Note the trade-off honestly: a runtime registry (AWS Glue, Apicurio)
+adds *centralized* governance and framing that is **incompatible on the wire** with this setup —
+choose per topic, don't mix.
+
+**Choice 3 — broker security is configuration, not code.** The `kafka.properties.*` map is passed
+verbatim to both clients (applied last, so it can override anything), which keeps the example
+generic the way the storage port is multi-cloud. **Amazon MSK with IAM auth** is the worked example:
+the `kafka-msk-iam` profile (a *group*, pulls `kafka` in) adds the four SASL entries and the
+`aws-msk-iam-auth` runtime jar supplies the `AWS_MSK_IAM` mechanism — credentials flow through the
+standard AWS provider chain (IRSA / pod identity), exactly like S3. Point `KAFKA_BOOTSTRAP_SERVERS`
+at the IAM endpoint (`:9098`) and it just works; there is **no MSK emulator**, so the property
+assembly is pinned by a unit test (`KafkaMskIamProfileTest`) and the handshake itself is verified
+against a real cluster. SCRAM or mTLS for on-prem clusters are the same move: entries in
+`kafka.properties.*`.
+
+Topics are **provisioned by the platform**, not created by the app (partitions/replication/retention
+are capacity decisions — the same philosophy as the database roles). `local-kafka` runs a
+compose-managed single-node **Apache Kafka (KRaft)** on `localhost:9092`; `ReferenceKafkaIT` proves
+the full round trip against a Testcontainers broker: publish → broker → poll loop → parsed event
+reaches the handler bit-for-bit.
+
+### 15. The `local-*` profiles
 
 For running the app on a workstation against real-ish backends. Profile **groups** (in
 `application.yaml`) make `local-aws`/`local-azure` pull in their provider profile automatically;
-`local-db` is deliberately **self-contained** — group members are applied *last*, so the `db`
-profile's env-var placeholders would override the concrete local values on the shared keys (a
-subtlety worth stealing: groups only compose cleanly over disjoint keys):
+`local-db` and `local-kafka` are deliberately **self-contained** — group members are applied *last*,
+so the `db`/`kafka` profile's env-var placeholders would override the concrete local values on the
+shared keys (a subtlety worth stealing: groups only compose cleanly over disjoint keys, which is why
+`kafka-msk-iam` *can* be a group — it only adds `kafka.properties.*` entries):
 
 ```bash
 ./mvnw spring-boot:run -Dspring-boot.run.profiles=local-aws     # Floci   (S3)       on :4566
 ./mvnw spring-boot:run -Dspring-boot.run.profiles=local-azure   # Azurite (Blob)     on :10000
 ./mvnw spring-boot:run -Dspring-boot.run.profiles=local-db      # PostgreSQL (+ Liquibase) on :5432
+./mvnw spring-boot:run -Dspring-boot.run.profiles=local-kafka   # Apache Kafka (KRaft) on :9092
 ```
 
 Each `application-local-*.yaml` turns on `spring-boot-docker-compose`
 (`spring.docker.compose.enabled=true`) and selects its service via a **Compose profile**
 (`spring.docker.compose.profiles.active`), so only the needed container from `compose.yaml` is
 started — with a healthcheck, so Spring waits for actual readiness. The `local-*` profiles also
-enable the [development file log](#15-logging). Base config keeps docker-compose **off** (so it
+enable the [development file log](#16-logging). Base config keeps docker-compose **off** (so it
 never triggers in tests or production).
 
-### 15. Logging
+### 16. Logging
 
 `src/main/resources/logback-spring.xml` (named `-spring` so `<springProperty>` works) stays as close
 to the Spring Boot defaults as possible. Everything goes to **STDOUT**; with no flags set the
@@ -344,14 +401,14 @@ runtime code compilation. Tests use a separate console-only `logback-test.xml`.
 java -jar target/reference-app-*.jar --logging.json.enabled=true    # JSON console
 ```
 
-### 16. Graceful shutdown
+### 17. Graceful shutdown
 
 `server.shutdown=graceful` + `spring.lifecycle.timeout-per-shutdown-phase=25s`: on SIGTERM the
 readiness probe flips to false, in-flight requests drain (bounded to fit inside Kubernetes' default
 30 s termination grace period with headroom), then the app exits deterministically. Rollouts and
 scale-downs lose no requests.
 
-### 17. The `ci-reports` profile (non-blocking)
+### 18. The `ci-reports` profile (non-blocking)
 
 `-Pci-reports` adds analysis that **never fails the build** — it only *generates* artifacts. Each goal
 binds to the earliest phase its inputs are ready, so the scope follows the lifecycle:
@@ -364,7 +421,7 @@ binds to the earliest phase its inputs are ready, so the scope follows the lifec
 Coverage is emitted as **XML + CSV only — no HTML**, on purpose: JaCoCo's HTML report embeds the
 annotated source and has no switch to omit it.
 
-### 18. The `ci-gates` profile (blocking gates)
+### 19. The `ci-gates` profile (blocking gates)
 
 `ci-gates` turns the same concerns into **blocking gates**, and is **self-sufficient**: the SBOM
 comes from the default build, the license/SpotBugs gates generate their own inputs, and the JaCoCo
@@ -385,7 +442,7 @@ data), **Trivy + Grype** fail on `HIGH`/`CRITICAL`, **license** fails on forbidd
 family to start), **SpotBugs** fails on findings at/above the threshold. Under `ci-gates` the scanners
 drop the "missing binary is OK" tolerance — Trivy and Grype **must** be on the CI image.
 
-### 19. SBOM + vulnerability scanning
+### 20. SBOM + vulnerability scanning
 
 - The **SBOM is Spring Boot's built-in one**: declaring `cyclonedx-maven-plugin` activates the
   parent's managed `makeAggregateBom` execution, which writes
@@ -398,7 +455,7 @@ drop the "missing binary is OK" tolerance — Trivy and Grype **must** be on the
 > "Unknown keyword" for some CycloneDX 1.6 keywords it doesn't recognize. The setting only lowers
 > that one library's log level; genuine validation errors still surface.
 
-### 20. The container image
+### 21. The container image
 
 `Dockerfile` is multi-stage with **two selectable final targets**:
 
@@ -463,10 +520,10 @@ tuned with.
 
 | Variable | Values (default) | Description |
 |---|---|---|
-| `SPRING_PROFILES_ACTIVE` | `aws`, `azure`, `db`, `k8s`, `local-*` variants, combinable (none) | Feature selection. `aws`/`azure` pick the cloud adapter + SDK; `db` enables the database example; `k8s` the Kubernetes example; `local-*` variants add the compose-managed emulator/DB/k3s. |
+| `SPRING_PROFILES_ACTIVE` | `aws`, `azure`, `db`, `k8s`, `kafka`, `kafka-msk-iam`, `local-*` variants, combinable (none) | Feature selection. `aws`/`azure` pick the cloud adapter + SDK; `db` enables the database example; `k8s` the Kubernetes example; `kafka` the Kafka example (`kafka-msk-iam` = the same + MSK IAM auth); `local-*` variants add the compose-managed emulator/DB/k3s/broker. |
 | `CLOUD_PROVIDER` | `aws` \| `azure` \| `none` (`none`) | Which ObjectStorage adapter is active. Prefer setting it via the profiles above so the SDK enable-flags stay in sync. |
 | `LOGGING_JSON_ENABLED` | `true`/`false` (`false`) | Console in logback's default JSON format. Mutually exclusive with the custom JSON flag. |
-| `LOGGING_CUSTOMJSON_ENABLED` | `true`/`false` (`false`) | Console in the collector-friendly JSON schema (`@timestamp`, lowercase keys — §15). Mutually exclusive with the flag above. |
+| `LOGGING_CUSTOMJSON_ENABLED` | `true`/`false` (`false`) | Console in the collector-friendly JSON schema (`@timestamp`, lowercase keys — §16). Mutually exclusive with the flag above. |
 | `LOGGING_DEVELOP_ENABLED` | `true`/`false` (`false`) | Development-only rolling plaintext file under `./logs/`. Keep off in production. |
 | `LOG_FILE_MAXFILESIZE` | size (`10MB`) | Development file log: max size per file. |
 | `LOG_FILE_MAXHISTORY` | days (`7`) | Development file log: days of rolled files kept. |
@@ -483,8 +540,11 @@ tuned with.
 | `K8S_LEASENAME` | name (`reference-app-leader`) | Name of the Lease. |
 | `K8S_IDENTITY` | name (hostname = pod name) | This instance’s identity in the election. |
 | `K8S_KUBECONFIG` | path (in-cluster/service account) | Kubeconfig file for outside-cluster use (the `local-k8s` profile sets it). |
+| `KAFKA_BOOTSTRAP_SERVERS` | `host:port,…` (required with `kafka`) | Broker list; with `kafka-msk-iam` the cluster's IAM bootstrap endpoint (`:9098`). |
+| `KAFKA_TOPIC` | name (`reference-greetings`) | Topic of the Kafka example — provisioned by the platform, never created by the app. |
+| `KAFKA_GROUPID` | name (`reference-app`) | Consumer group; shared by all replicas of one deployment. |
 | `MANAGEMENT_SERVER_PORT` | port (`6080`) | Actuator side port (health, probes, prometheus, sbom, info). |
-| `JAVA_TOOL_OPTIONS` | JVM flags (unset) | Read by the JVM automatically — the deployment's standard flags (memory, GC, GC logging; see [§20](#20-the-container-image)). |
+| `JAVA_TOOL_OPTIONS` | JVM flags (unset) | Read by the JVM automatically — the deployment's standard flags (memory, GC, GC logging; see [§21](#21-the-container-image)). |
 | `JVM_OPTS`, `JAVA_OPTS` | JVM flags (unset) | Appended explicitly by `entrypoint.sh` — ad-hoc additions on top of `JAVA_TOOL_OPTIONS`. |
 
 Secrets (`DB_*_PASSWORD`, cloud credentials) must come from the platform's secret store — never from
@@ -503,7 +563,7 @@ push; **Release CI** is Generic CI + supply-chain/publish on a `vX.Y.Z` tag.
 | Format gate (Spotless) | `process-sources` | ✓ | ✓ | ✓ |
 | Build + git metadata | `initialize`/`generate-resources` | ✓ | ✓ | ✓ |
 | Unit tests | `test` | ✓ | ✓ | ✓ |
-| Integration tests (Floci + Azurite + PostgreSQL) | `integration-test` | ✓ (`verify`) | ✓ | ✓ |
+| Integration tests (Floci + Azurite + PostgreSQL + k3s + Kafka) | `integration-test` | ✓ (`verify`) | ✓ | ✓ |
 | Coverage (gate: ≥ 80%) | `test`/`verify` | `-Pci-reports` | ✓ | ✓ |
 | SBOM (in jar + `/actuator/sbom`) | `package` | opt | ✓ | ✓ |
 | Vuln scan (Trivy + Grype) | `verify` | `-Pci-reports` | ✓ | ✓ |
@@ -525,8 +585,8 @@ reference-app/
 ├── pom.xml                       # the heart — toolchain pins, gates, profiles (heavily commented)
 ├── mvnw, mvnw.cmd                # Maven wrapper (pins 3.9.16)
 ├── mvnvm.properties              # mvnvm version pin (3.9.16)
-├── compose.yaml                  # Floci / Azurite / PostgreSQL (compose profiles aws / azure / db)
-├── Dockerfile                    # hardened base + `app` / `app-prebuilt` targets (§20)
+├── compose.yaml                  # Floci / Azurite / PostgreSQL / k3s / Kafka (compose profiles aws / azure / db / k8s / kafka)
+├── Dockerfile                    # hardened base + `app` / `app-prebuilt` targets (§21)
 ├── entrypoint.sh                 # container start; applies JVM_OPTS/JAVA_OPTS
 ├── db/init/01-roles.sql          # the expected DB role/permission layout (local bootstrap)
 ├── k8s/leader-election-rbac.yaml # the RBAC the leader election needs (deployed with the app)
@@ -545,14 +605,23 @@ reference-app/
     │   ├── db/                             # database example (§12)
     │   │   ├── DatabaseConfiguration.java  # rw/ro pools + read-only routing proxy
     │   │   └── GreetingRepository.java     # rw writes / ro reads
-    │   └── k8s/                            # Kubernetes example (§13)
-    │       ├── K8sConfiguration.java       # KubernetesClient (service account / kubeconfig)
-    │       ├── K8sProperties.java
-    │       └── LeaderElection.java         # Lease-based leader election; isLeader()
+    │   ├── k8s/                            # Kubernetes example (§13)
+    │   │   ├── K8sConfiguration.java       # KubernetesClient (service account / kubeconfig)
+    │   │   ├── K8sProperties.java
+    │   │   └── LeaderElection.java         # Lease-based leader election; isLeader()
+    │   └── kafka/                          # Kafka example (§14)
+    │       ├── KafkaConfiguration.java     # native clients from config; kafka.properties.* pass-through
+    │       ├── KafkaProperties.java
+    │       ├── ProtobufSerializer.java     # plain protobuf on the wire (no registry framing)
+    │       ├── GreetingEventProducer.java  # shared producer; acks=all + idempotence; keyed sends
+    │       ├── GreetingEventConsumer.java  # owned poll loop; at-least-once; poison-pill safe
+    │       └── GreetingEventHandler.java   # the seam to business logic (default bean: logs)
+    ├── main/protobuf/
+    │   └── greeting_event.proto            # THE message contract (evolution rules inside)
     ├── main/resources/
     │   ├── application.yaml                # base config (everything optional off, actuator on 6080)
-    │   ├── application-{aws,azure,db,k8s}.yaml         # provider profiles
-    │   ├── application-local-{aws,azure,db,k8s}.yaml   # workstation profiles (compose auto-start)
+    │   ├── application-{aws,azure,db,k8s,kafka}.yaml        # provider profiles (+ kafka-msk-iam overlay)
+    │   ├── application-local-{aws,azure,db,k8s,kafka}.yaml  # workstation profiles (compose auto-start)
     │   ├── db/changelog/                   # Liquibase changelog (+ grants)
     │   └── logback-spring.xml              # default/JSON console + dev-only ./logs file
     └── test/
@@ -563,7 +632,9 @@ reference-app/
         │   ├── storage/ReferenceS3IT.java         # integration, AWS (failsafe)
         │   ├── storage/ReferenceAzureBlobIT.java  # integration, Azure (failsafe)
         │   ├── db/ReferencePostgresIT.java        # integration, DB (failsafe)
-        │   └── k8s/ReferenceLeaderElectionIT.java # integration, k3s (failsafe)
+        │   ├── k8s/ReferenceLeaderElectionIT.java # integration, k3s (failsafe)
+        │   ├── kafka/…Test.java                   # unit: MockProducer/MockConsumer, MSK IAM config
+        │   └── kafka/ReferenceKafkaIT.java        # integration, Kafka round trip (failsafe)
         └── resources/{application.yaml, logback-test.xml}
 ```
 
@@ -584,6 +655,10 @@ reference-app/
 - **Database access:** roles and permissions are provisioned with the database, never from
   migrations — changelogs hold schema objects only. Use the routed rw/ro pools (§12): one
   `JdbcTemplate`, read paths marked `@Transactional(readOnly = true)`.
+- **Messaging:** one `.proto` contract per topic under `src/main/protobuf/` (evolution rules in
+  §14 — field numbers are forever); topics are provisioned by the platform, not the app. Design
+  consumers for at-least-once: deduplicate on the event id, and never let a record parse/handle
+  failure kill the poll loop. Broker security goes into `kafka.properties.*`, never into code.
 - **Formatting:** never hand-format — run `./mvnw spotless:apply` and `./mvnw tidy:pom`. The build
   enforces both.
 - **Dependencies:** add through a BOM where one exists; pin a version only for genuinely standalone

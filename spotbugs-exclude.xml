@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SpotBugs exclusions — referenced by both the ci-reports and ci-gates spotbugs
+     configuration in pom.xml. Keep this file SHORT and every entry justified. -->
+<FindBugsFilter xmlns="https://github.com/spotbugs/filter/3.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="https://github.com/spotbugs/filter/3.0.0 https://raw.githubusercontent.com/spotbugs/spotbugs/3.1.0/spotbugs/etc/findbugsfilter.xsd">
+	<!-- protobuf-GENERATED message classes (protobuf-maven-plugin over src/main/protobuf):
+	     machine-written code we cannot and should not fix — protoc's exposed singletons and
+	     mutable-builder internals trip EI_EXPOSE_REP/MS_EXPOSE_REP/SING_* by design.
+	     Mirrors the JaCoCo exclusion of the same package in pom.xml. -->
+	<Match>
+		<Package name="hu.zzit.reference.kafka.event"/>
+	</Match>
+</FindBugsFilter>

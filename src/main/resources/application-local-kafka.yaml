@@ -1,0 +1,20 @@
+# Local Kafka development profile. Targets a compose-managed single-node Apache Kafka
+# (KRaft) on localhost:9092. SELF-CONTAINED, deliberately NOT a profile group over
+# `kafka`: group members are applied last, so application-kafka.yaml's
+# ${KAFKA_BOOTSTRAP_SERVERS} placeholder would override the localhost value below and
+# fail unresolved (the same reason local-db is self-contained).
+# Activate with:  --spring.profiles.active=local-kafka  or  SPRING_PROFILES_ACTIVE=local-kafka
+logging:
+  develop:
+    enabled: true
+spring:
+  docker:
+    compose:
+      # Auto-start/stop the Kafka broker (compose.yaml, compose profile `kafka`)
+      # while this profile is active.
+      enabled: true
+      profiles:
+        active: kafka
+kafka:
+  enabled: true
+  bootstrap-servers: localhost:9092

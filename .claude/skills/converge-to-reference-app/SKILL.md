@@ -7,7 +7,9 @@ description: >-
   builds, logback logging, graceful shutdown, Prometheus metrics on a side port, optional
   multi-cloud (AWS + Azure behind a retrying port), an optional least-privilege database setup
   (platform-provisioned roles/permissions, routed read-write/read-only pools, grant-free Liquibase
-  changelogs), an optional Kubernetes API example (Lease-based leader election; k3s locally), a
+  changelogs), an optional Kubernetes API example (Lease-based leader election; k3s locally), an
+  optional Kafka example (native kafka-clients — no spring-kafka —, a protobuf message contract
+  without a schema registry, at-least-once consumption, Amazon MSK IAM auth as pure configuration), a
   hardened multi-stage container image, and the ci-reports/ci-gates profiles with SBOM +
   Trivy/Grype + SpotBugs + license gates (coverage ≥ 80%). Use when asked to standardize, harden,
   modernize, migrate, or audit a project against reference-app, or to set up its build/CI to match
@@ -138,7 +140,9 @@ Add the rules from reference-app §3. **Expect failures on a real project** and 
   in tests/production.
 - Spring profile groups (`local-aws` = `aws` + emulator bits) only compose cleanly over **disjoint
   keys** — group members are applied LAST and win on overlapping keys, which is why reference-app's
-  `local-db` is self-contained rather than a group over `db`.
+  `local-db` and `local-kafka` are self-contained rather than groups over `db`/`kafka` (whose
+  `${ENV}` placeholders would win), while `kafka-msk-iam` CAN be a group over `kafka` (it only adds
+  `kafka.properties.*` entries).
 
 ### J. The `ci-reports` profile (non-blocking) and `ci-gates` profile (blocking)
 - `ci-reports`: JaCoCo (split unit/integration/merged; **XML + CSV only, no HTML** — HTML embeds source),
@@ -180,6 +184,8 @@ Add the rules from reference-app §3. **Expect failures on a real project** and 
 | `dependencyConvergence` red after adding Testcontainers | import `testcontainers-bom`; artifact is `testcontainers-junit-jupiter` in 2.x. |
 | SBOM generated twice / extra warnings | don't add `makeBom`; use the parent's `makeAggregateBom`. |
 | logback `<if condition=>` deprecation WARN | switch to class-based `<condition>` element. |
+| Profile group not expanded in a `@SpringBootTest` | `@ActiveProfiles` bypasses Spring Boot's group expansion → activate via the `spring.profiles.active` PROPERTY; and remember the test-classpath `application.yaml` SHADOWS main's, so repeat the group definition there. |
+| Coverage/SpotBugs gates red after adding protobuf codegen | generated classes must be excluded in BOTH: JaCoCo `<excludes>` (in ci-reports AND ci-gates) and SpotBugs `excludeFilterFile`. |
 
 ## Verification (do this, don't assume)
 

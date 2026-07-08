@@ -1,0 +1,8 @@
+# Kafka provider profile: activates the Kafka example — native kafka-clients, protobuf
+# message contract (see hu.zzit.reference.kafka). Expects the broker list from the
+# environment. Broker security is pure configuration via kafka.properties.*: put TLS /
+# SASL client settings there per environment — for Amazon MSK with IAM use the
+# `kafka-msk-iam` profile, for a workstation + compose-managed broker use `local-kafka`.
+kafka:
+  enabled: true
+  bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS}
