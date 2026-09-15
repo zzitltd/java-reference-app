@@ -26,23 +26,9 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @Testcontainers
 class ReferenceAzureBlobIT {
 
-    /**
-     * --skipApiVersionCheck (same flag in compose.yaml): the Azure SDK speaks a storage API version
-     * newer than Azurite knows — drop once Azurite catches up. The create-cmd modifier is needed
-     * because AzuriteContainer overwrites withCommand() in configure().
-     */
     @Container
     @SuppressWarnings("resource") // no leak: the @Testcontainers extension starts/stops @Container fields
-    static final AzuriteContainer AZURITE = new AzuriteContainer("mcr.microsoft.com/azure-storage/azurite:3.35.0")
-            .withCreateContainerCmdModifier(cmd -> cmd.withCmd(
-                    "azurite",
-                    "--blobHost",
-                    "0.0.0.0",
-                    "--queueHost",
-                    "0.0.0.0",
-                    "--tableHost",
-                    "0.0.0.0",
-                    "--skipApiVersionCheck"));
+    static final AzuriteContainer AZURITE = new AzuriteContainer("mcr.microsoft.com/azure-storage/azurite:3.37.0");
 
     @DynamicPropertySource
     static void azureProperties(DynamicPropertyRegistry registry) {

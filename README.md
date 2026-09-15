@@ -172,7 +172,8 @@ documented in the `<properties>` block (currently: `msal4j` + JNA under `azure-i
 ### 8. Web on Jetty; actuator, probes and metrics on a side port
 
 - **Jetty instead of Tomcat** — a fleet-wide convention. We exclude `spring-boot-starter-tomcat`
-  from `spring-boot-starter-web` and add `spring-boot-starter-jetty`.
+  from `spring-boot-starter-webmvc` (Boot 4's name; `spring-boot-starter-web` is a deprecated alias)
+  and add `spring-boot-starter-jetty`.
 - **Actuator on port 6080** (`management.server.port`), separate from application traffic —
   `health`, `info`, `sbom` and `prometheus` are exposed there and never mix with business traffic.
 - **Probes:** the Kubernetes-style liveness/readiness groups are enabled everywhere

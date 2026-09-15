@@ -6,8 +6,8 @@
 #   --spring.profiles.active=local-k8s    (k3s,        compose profile `k8s`)
 #   --spring.profiles.active=local-kafka  (Kafka,      compose profile `kafka`)
 # Each Spring profile selects its service via spring.docker.compose.profiles.active,
-# so only the one you need is started. Healthchecks are defined so Spring waits for
-# actual readiness, not just container start.
+# so only the one you need is started. Every service has a healthcheck (Floci's is built
+# into its image) so Spring waits for actual readiness, not just container start.
 #
 # No /var/run/docker.sock mount on Floci: that is only needed for compute services
 # (Lambda/ECS); reference-app only uses object storage.
@@ -17,18 +17,9 @@ services:
     profiles: ["aws"]
     ports:
       - "4566:4566"
-    healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:4566/_localstack/health"]
-      interval: 5s
-      timeout: 3s
-      retries: 12
   azurite:
-    image: mcr.microsoft.com/azure-storage/azurite:3.35.0
+    image: mcr.microsoft.com/azure-storage/azurite:3.37.0
     profiles: ["azure"]
-    # --skipApiVersionCheck: the Azure SDK managed by the Spring Cloud Azure BOM speaks a
-    # storage API version newer than Azurite knows; this is Azure's documented workaround
-    # (same flag in ReferenceAzureBlobIT). Drop it once Azurite catches up.
-    command: azurite --blobHost 0.0.0.0 --queueHost 0.0.0.0 --tableHost 0.0.0.0 --skipApiVersionCheck
     ports:
       - "10000:10000"
     healthcheck:
