@@ -533,6 +533,19 @@ The rest of the design is flavor-independent:
   plus method profiles — which `entrypoint.sh` passes as `-XX:AOTCache`. Measured here (readiness
   probe from launch): fat jar ~2.3 s → extracted ~1.7 s → extracted + cache **~0.9 s** natively,
   ~2.7 s → **~1.2 s** in the container. The cache costs ~86 MB of image and a ~5 s training run.
+  The gain grows with CPU scarcity — startup is CPU-bound, and the cache removes CPU work. Measured
+  in the Alpine image under `docker run --cpus=N --memory=16g` (readiness from launch, medians of 5):
+
+  | vCPU | fat jar, no cache | extracted, no cache | JDK cache | JDK cache + Spring AOT |
+  |---:|---:|---:|---:|---:|
+  | 1 | 5.4 s | 4.3 s | 2.2 s | 1.8 s |
+  | 2 | 2.8 s | 2.1 s | 1.2 s | 1.0 s |
+  | 4 | 2.3 s | 1.9 s | 1.0 s | 0.8 s |
+  | 32 | 2.6 s | 2.1 s | 1.1 s | 0.9 s |
+
+  Size your pods' CPU *limit* with startup in mind (or allow bursting): at one vCPU the original layout
+  needs 5.4 s, and 32 vCPUs are slightly *slower* than 4 — the JVM sizes its GC and JIT thread pools
+  by CPU count.
   Constraints, both enforced by the build: the cache is valid only for the exact JVM that made it (so
   training happens on the runtime JRE, in the final stage, as the runtime user) and the exact
   classpath. And **the training JVM flags must match the deployment's** for GC and pointer mode: a
