@@ -27,7 +27,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 class ReferenceS3IT {
 
     @Container
-    static final FlociContainer FLOCI = new FlociContainer("floci/floci:1.5.29");
+    static final FlociContainer FLOCI = new FlociContainer("floci/floci:2.1.0");
 
     @DynamicPropertySource
     static void awsProperties(DynamicPropertyRegistry registry) {

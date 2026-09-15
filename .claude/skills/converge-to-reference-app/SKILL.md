@@ -76,8 +76,8 @@ Add the rules from reference-app §3. **Expect failures on a real project** and 
 ### D. Dependencies via BOMs
 - Prefer BOM imports over per-dependency versions. For Spring Boot use the parent; add the relevant
   cloud/test BOMs (`spring-cloud-aws-dependencies` 4.x and/or `spring-cloud-azure-dependencies` 7.x
-  for Boot 4). **Testcontainers BOM is not managed by the Boot 4.1 parent — import it explicitly**
-  (also makes transitive Testcontainers deps converge).
+  for Boot 4). The Boot 4.1 parent already imports the Testcontainers BOM and manages
+  `protobuf-java` + the `protobuf-maven-plugin` — do not re-pin those.
 - Only standalone artifacts keep an explicit `<version>`. Record CVE-driven pins in `<properties>`
   tagged with the CVE/GHSA id; record convergence pins the same way (the Azure BOM does NOT manage
   azure-identity's transitives — reference-app pins `msal4j` and JNA, see its POM).
@@ -181,7 +181,7 @@ Add the rules from reference-app §3. **Expect failures on a real project** and 
 | Oracle ban also blocks Oracle OpenJDK | test `java.vm.name` contains `Java HotSpot(TM)`, not `java.vendor`. |
 | Mockito "self-attaching agent" warning | load via `-javaagent` + `dependency:properties`. |
 | Coverage HTML leaks source code | JaCoCo `<formats>XML,CSV</formats>` (no HTML toggle exists). |
-| `dependencyConvergence` red after adding Testcontainers | import `testcontainers-bom`; artifact is `testcontainers-junit-jupiter` in 2.x. |
+| `dependencyConvergence` red after adding Testcontainers | rely on the Boot parent's `testcontainers-bom` import; the artifact is `testcontainers-junit-jupiter` in 2.x. |
 | SBOM generated twice / extra warnings | don't add `makeBom`; use the parent's `makeAggregateBom`. |
 | logback `<if condition=>` deprecation WARN | switch to class-based `<condition>` element. |
 | Profile group not expanded in a `@SpringBootTest` | `@ActiveProfiles` bypasses Spring Boot's group expansion → activate via the `spring.profiles.active` PROPERTY; and remember the test-classpath `application.yaml` SHADOWS main's, so repeat the group definition there. |

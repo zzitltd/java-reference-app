@@ -156,14 +156,15 @@ Two plugins feed `/actuator/info`:
 Versions are managed centrally, not scattered on individual `<dependency>` entries:
 
 - The **Spring Boot parent** manages the whole Spring/Jackson/JDBC/Liquibase/test stack.
-- **Spring Cloud AWS BOM** (`spring-cloud-aws-dependencies`, 4.0.x → targets Boot 4) manages the AWS
+- **Spring Cloud AWS BOM** (`spring-cloud-aws-dependencies`, 4.x → targets Boot 4) manages the AWS
   starters + a compatible AWS SDK v2.
 - **Spring Cloud Azure BOM** (`spring-cloud-azure-dependencies`, 7.x → targets Boot 4) manages the
   Azure starters + (via the imported `azure-sdk-bom`) a compatible Azure SDK.
-- **Testcontainers BOM** — not managed by the Boot 4.1 parent, so we import it ourselves; this also
-  makes Floci's transitive Testcontainers deps converge (needed for `dependencyConvergence`).
+- The Boot parent also imports the **Testcontainers BOM** and manages `kafka-clients`,
+  `protobuf-java` and the `protobuf-maven-plugin` — none of those carry a version of ours.
 
-Only genuinely standalone artifacts (the Floci Testcontainers module) carry an explicit `<version>`.
+Only genuinely standalone artifacts (the Floci Testcontainers module, `aws-msk-iam-auth`, the Fabric8
+client, `logstash-logback-encoder`) carry an explicit `<version>`.
 Where a BOM leaves a transitive gap, we add a **convergence pin** in `<dependencyManagement>`, each
 documented in the `<properties>` block (currently: `msal4j` + JNA under `azure-identity`,
 `commons-text` under Liquibase) — re-check them on every BOM bump.

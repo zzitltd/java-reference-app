@@ -40,7 +40,7 @@ class ReferenceLeaderElectionIT {
 
     @Container
     @SuppressWarnings("resource") // no leak: the @Testcontainers extension starts/stops @Container fields
-    static final K3sContainer K3S = new K3sContainer(DockerImageName.parse("rancher/k3s:v1.36.2-k3s1"));
+    static final K3sContainer K3S = new K3sContainer(DockerImageName.parse("rancher/k3s:v1.37.0-k3s1"));
 
     @DynamicPropertySource
     static void k8sProperties(DynamicPropertyRegistry registry) {

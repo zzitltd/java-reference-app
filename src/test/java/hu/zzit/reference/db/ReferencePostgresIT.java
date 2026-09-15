@@ -34,7 +34,7 @@ class ReferencePostgresIT {
 
     @Container
     @SuppressWarnings("resource") // no leak: the @Testcontainers extension starts/stops @Container fields
-    static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18.4")
+    static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18.6")
             .withDatabaseName("reference")
             // Same role/permission bootstrap as the compose service (db/init mounted to initdb.d).
             .withCopyFileToContainer(

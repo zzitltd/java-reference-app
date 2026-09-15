@@ -44,7 +44,7 @@ class ReferenceKafkaIT {
 
     @Container
     @SuppressWarnings("resource") // no leak: the @Testcontainers extension starts/stops @Container fields
-    static final KafkaContainer KAFKA = new KafkaContainer(DockerImageName.parse("apache/kafka:4.2.1"));
+    static final KafkaContainer KAFKA = new KafkaContainer(DockerImageName.parse("apache/kafka:4.3.1"));
 
     @DynamicPropertySource
     static void kafkaProperties(DynamicPropertyRegistry registry) {
