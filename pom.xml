@@ -537,6 +537,10 @@
 					<protoc kind="binary-maven">
 						<version>${protobuf-java.version}</version>
 					</protoc>
+					<!-- The parent's managed configuration adds the gRPC generator (protoc-gen-grpc-java,
+					     a glibc-only binary that cannot run in the Alpine builder). No gRPC services here:
+					     clear the inherited plugin list. -->
+					<plugins combine.self="override"/>
 				</configuration>
 				<executions>
 					<execution>

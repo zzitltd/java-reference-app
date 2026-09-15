@@ -1,5 +1,5 @@
-#!/bin/bash
-# Container entrypoint for reference-app.
+#!/bin/sh
+# Container entrypoint for reference-app. POSIX sh: the Alpine flavor has no bash.
 #
 # JVM configuration comes from the environment, in two complementary ways:
 #   * JAVA_TOOL_OPTIONS — picked up by the JVM automatically (we don't touch it here).
@@ -9,8 +9,8 @@
 # Word-splitting of $JVM_OPTS/$JAVA_OPTS is intentional (they hold multiple flags).
 #
 #   run (default)  start the application
-#   <anything else> executed as-is (e.g. `bash` for debugging)
-set -euo pipefail
+#   <anything else> executed as-is (e.g. `sh` for debugging)
+set -eu
 
 if [ "${1:-run}" = "run" ]; then
     # shellcheck disable=SC2086

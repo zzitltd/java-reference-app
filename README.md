@@ -4,7 +4,7 @@ The **ZZ-IT reference application** — a Spring Boot 4 / Java 25 service that e
 from*. The business code is deliberately tiny (an object-storage round-trip behind a small port, and
 a minimal database example). The real product is the **build, quality, and supply-chain setup**: the
 toolchain pins, the enforced gates, the test split, the profiles, the logging, the SBOM, and the
-container image. Other fleet services (and the AI agents working on them) should converge to what is
+container image (a JRE on Alpine or Amazon Linux 2023, selectable per build). Other fleet services (and the AI agents working on them) should converge to what is
 documented here.
 
 If you are an **AI agent** asked to bring another project in line with this one, read
@@ -37,7 +37,7 @@ If you are an **AI agent** asked to bring another project in line with this one,
   - [18. The `ci-reports` profile (non-blocking)](#18-the-ci-reports-profile-non-blocking)
   - [19. The `ci-gates` profile (blocking gates)](#19-the-ci-gates-profile-blocking-gates)
   - [20. SBOM + vulnerability scanning](#20-sbom--vulnerability-scanning)
-  - [21. The container image](#21-the-container-image)
+  - [21. The container image: two JRE flavors](#21-the-container-image-two-jre-flavors)
 - [Environment variables](#environment-variables)
 - [Build pipeline matrix](#build-pipeline-matrix)
 - [Project layout](#project-layout)
@@ -65,8 +65,9 @@ Use the wrapper (`./mvnw`) — it pins Maven 3.9.16 to match the enforcer. On Wi
 | Run with **Kafka** locally (broker auto-started) | `./mvnw spring-boot:run -Dspring-boot.run.profiles=local-kafka` |
 | Run the packaged jar | `java -jar target/reference-app-*.jar` |
 | Switch console logs to JSON | add `--logging.json.enabled=true` |
-| Build the image from a host-built jar | `docker build --target app-prebuilt -t reference-app .` |
+| Build the image from a host-built jar (Temurin on Alpine, the default flavor) | `docker build --target app-prebuilt -t reference-app .` |
 | Build the image incl. the jar (no local JDK needed) | `docker build --target app -t reference-app .` |
+| Build the glibc flavor (Corretto on Amazon Linux 2023) | add `--build-arg JAVA_FLAVOR=corretto-al2023` |
 
 Generated artifacts after `-Pci-reports` land under `target/`: `site/jacoco-{unit,integration,merged}/`
 (coverage XML/CSV), `trivy-report.json`, `grype-report.json`, `license/THIRD-PARTY.txt`,
@@ -457,54 +458,92 @@ drop the "missing binary is OK" tolerance — Trivy and Grype **must** be on the
 > "Unknown keyword" for some CycloneDX 1.6 keywords it doesn't recognize. The setting only lowers
 > that one library's log level; genuine validation errors still surface.
 
-### 21. The container image
+### 21. The container image: two JRE flavors
 
-`Dockerfile` is multi-stage with **two selectable final targets**:
+`Dockerfile` is multi-stage with **two selectable Java flavors** and **two selectable final targets**.
+The app **runs on a JRE**; the jar is **built on the matching JDK**:
 
 ```bash
 docker build --target app-prebuilt -t reference-app .   # package a host/CI-built jar (fast; CI already ran verify)
 docker build --target app          -t reference-app .   # full in-image build (no local JDK/Maven needed)
+docker build --build-arg JAVA_FLAVOR=corretto-al2023 --target app-prebuilt -t reference-app .
 ```
 
-- The **`base` stage** is a hardened runtime base on `amazoncorretto:25`, fully parameterized by
-  build args (defaults in parentheses):
-  - **Patching**: `OS_UPGRADE` (`true`) runs `dnf upgrade` to the latest releasever — re-run it on
-    rebuilds via `CACHEBUST`; set it `false` when pinning the base by digest for reproducibility.
-  - **Package sets**: the production set is **minimal by default (empty)** — `BASE_PACKAGES` adds
-    always-installed extras, and `INCLUDE_DEV_PACKAGES=true` adds the `DEV_PACKAGES` debug toolset
-    (viewers/editors: less, vim, nano, jq, file; process/system: procps-ng, lsof, strace; network:
-    iputils, iproute, nmap-ncat, traceroute, bind-utils, tcpdump; plus findutils/tar/unzip). JVM
-    diagnostics — jcmd, jstack, jmap, JFR — need no package: the JDK base ships them. This works on
-    **any target**, so `--build-arg INCLUDE_DEV_PACKAGES=true --target app-prebuilt` yields a
-    tools-included build of the very same app for troubleshooting environments.
+| `JAVA_FLAVOR` | Runtime image | Builder image | libc | When |
+|---|---|---|---|---|
+| `temurin-alpine` (default) | `eclipse-temurin:25-jre-alpine-3.24` | `eclipse-temurin:25-jdk-alpine-3.24` | musl | The default: smallest image, fewest findings in the java-base-image survey. |
+| `corretto-al2023` | `amazoncorretto:25-al2023-headless` | `amazoncorretto:25-al2023-jdk` | glibc | Workloads with native libraries that have no musl build. |
+
+Both flavors come out of the same file and behave the same at runtime (same user, ports, entrypoint,
+env vars); the choice is a single build arg, and each runtime image's origin is recorded in the
+`org.opencontainers.image.base.name` label. Notes from the survey that shaped the flavors:
+
+- **musl and native libraries.** Vendors ship native musl builds of the JVM for Alpine; the risk is in
+  *dependencies* that bundle a native `.so`. zstd-jni, lz4-java and JNA carry musl builds; **snappy-java
+  (on the classpath via `kafka-clients`) does not** and fails to load on Alpine — the Alpine flavor
+  therefore installs the ~300 KB `gcompat` shim. A dependency that neither ships a musl build nor works
+  under `gcompat` is the reason to pick `corretto-al2023`. A glibc JVM on Alpine is *not* an option.
+- **Native library extraction.** snappy-java and zstd-jni extract their `.so` into `java.io.tmpdir`, so
+  `/tmp` must be executable: Kubernetes `emptyDir` is; Docker's `--tmpfs /tmp` is `noexec` by default
+  (`--tmpfs /tmp:exec`).
+- **Tooling differs.** Alpine has busybox (`sh`, `wget`, `adduser`) but no bash or curl; Amazon Linux
+  has bash and curl but no wget. The `HEALTHCHECK` probes with whichever exists, `entrypoint.sh` is POSIX
+  `sh`, and `APP_SHELL` defaults to `/bin/sh`. Package names differ too, hence per-flavor `DEV_PACKAGES`
+  defaults and flavor-native `BASE_PACKAGES`.
+- **JRE means no JDK tools.** `jcmd`, `jstack`, `jmap` are not in the image (Temurin's JRE has `jfr`;
+  Corretto headless has none). Diagnose with JVM flags in `JAVA_TOOL_OPTIONS`
+  (`-XX:StartFlightRecording`, `-XX:+HeapDumpOnOutOfMemoryError`, GC logging) or attach from an
+  ephemeral JDK container sharing the pod's process namespace (`kubectl debug --target`, same UID).
+
+The rest of the design is flavor-independent:
+
+- The **`base-*` stages** are hardened runtime bases, fully parameterized by build args (defaults in
+  parentheses):
+  - **Patching**: `OS_UPGRADE` (`true`) upgrades the OS packages (`apk upgrade` / `dnf upgrade
+    --releasever=latest`) — re-run it on rebuilds via `CACHEBUST`; set it `false` when pinning the base
+    by digest for reproducibility.
+  - **Package sets**: the production set is **minimal by default** (only `gcompat` on Alpine) —
+    `BASE_PACKAGES` adds always-installed extras, and `INCLUDE_DEV_PACKAGES=true` adds the
+    `DEV_PACKAGES` debug toolset (viewers/editors: less, vim, nano, jq, file; process/system: procps,
+    lsof, strace; network: iputils, iproute, netcat, traceroute, bind tools, tcpdump; plus
+    findutils/tar/unzip). This works on **any target**, so `--build-arg INCLUDE_DEV_PACKAGES=true
+    --target app-prebuilt` yields a tools-included build of the very same app for troubleshooting.
   - **Identity**: `APP_USER`/`APP_GROUP` (`javauser`/`javagroup`), `APP_UID`/`APP_GID`
     (1000/1000), `APP_HOME` (`/app` — home, workdir, and jar location, exported as `$APP_HOME` for
-    `entrypoint.sh`), `APP_SHELL` (`/bin/bash`). The final `USER` is set **numerically**
-    (`uid:gid`) on purpose: Kubernetes' `runAsNonRoot` admission can only verify numeric UIDs.
+    `entrypoint.sh`), `APP_SHELL` (`/bin/sh`). The final `USER` is set **numerically** (`uid:gid`) on
+    purpose: Kubernetes' `runAsNonRoot` admission can only verify numeric UIDs.
+  - **`CUSTOM_TRUSTED_ROOT_CA_CERTIFICATE_URL`**: optionally installs an extra trusted root CA
+    (corporate TLS inspection, internal CA) into the OS trust store **and** the JVM's `cacerts` — on
+    Alpine the JVM keeps its own trust store (imported with `keytool`), on Amazon Linux Corretto's
+    `cacerts` is a symlink into the OS store.
 
-  In a fleet setup this stage is typically maintained as a separate shared base image, published in
-  both flavors from the same file (e.g. `java-base:25` and `java-base:25-dev`) — it is inlined here
-  so the reference is self-contained. The `builder` stage installs its own build tooling (`tar` for
-  the Maven wrapper), so it works on the minimal base too.
-- **Reproducible release builds**: pass `BASE_IMAGE=amazoncorretto@sha256:…` (a digest pin) together
-  with `OS_UPGRADE=false` and the image builds from exactly the same inputs every time — the
+  In a fleet setup these stages are typically maintained as separate shared base images, published per
+  flavor in both variants from the same file (e.g. `java-base:25-alpine` and `java-base:25-alpine-dev`)
+  — they are inlined here so the reference is self-contained.
+- The **`builder` stage** is the flavor's JDK image plus what the Maven wrapper needs (`tar`/`gzip`,
+  already in busybox on Alpine); a throwaway stage, so it is neither patched nor de-rooted. Note that
+  the Spring Boot parent's managed `protobuf-maven-plugin` configuration adds the gRPC generator, a
+  glibc-only binary that cannot run on Alpine — the POM clears that inherited plugin list (there are no
+  gRPC services here).
+- **Reproducible release builds**: pass the flavor's image args as digest pins
+  (`TEMURIN_ALPINE_IMAGE=eclipse-temurin@sha256:…`, same for the JDK) together with
+  `OS_UPGRADE=false` and the image builds from exactly the same inputs every time — the
   container-side pair of the reproducible jar. OS patching then happens by bumping the digest
-  deliberately (auditable), not by whatever dnf served that day. The default (`tag` + upgrade)
-  remains right for everyday CI.
+  deliberately (auditable), not by whatever the package mirror served that day. The default (`tag` +
+  upgrade) remains right for everyday CI.
 - **OCI annotations**: the pipeline passes `IMAGE_REVISION`/`IMAGE_VERSION`/`IMAGE_CREATED` (from
   git) and they land as `org.opencontainers.image.*` labels — registries and scanners surface them,
   and they tie the image to the SBOM and `/actuator/info`.
-- **Read-only root filesystem ready**: the app writes only `/tmp` (Jetty's docbase) and — dev flag
-  only — `./logs`, so it runs with `readOnlyRootFilesystem: true` plus an emptyDir on `/tmp`
-  (verified with `docker run --read-only --tmpfs /tmp`).
-- **`CUSTOM_TRUSTED_ROOT_CA_CERTIFICATE_URL`** (build arg): optionally installs an extra trusted
-  root CA (corporate TLS inspection, internal CA).
+- **Read-only root filesystem ready**: the app writes only `/tmp` (Jetty's docbase, native-library
+  extraction) and — dev flag only — `./logs`, so it runs with `readOnlyRootFilesystem: true` plus an
+  emptyDir on `/tmp` (verified with `docker run --read-only --tmpfs /tmp:exec`).
 - **Ports**: `8080` application, `6080` actuator. The `HEALTHCHECK` (actuator health) is a
   local-run convenience — Kubernetes ignores it and uses probes.
 - **`entrypoint.sh`** starts the JVM. Runtime JVM configuration is **environment-driven, not baked
   in**: put the standard flags into `JAVA_TOOL_OPTIONS` (the JVM picks it up automatically — this is
   what a Helm chart typically sets), and use `JVM_OPTS`/`JAVA_OPTS` for ad-hoc additions. Guidance:
-  - Memory: `-XX:MaxRAMPercentage=75.0` (never `-Xmx` in containers).
+  - Memory: `-XX:MaxRAMPercentage=75.0` (never `-Xmx` in containers). On musl leave somewhat more
+    headroom for native memory than on glibc.
   - GC: **G1 and ZGC are both valid choices** — select per workload:
     `-XX:+UseG1GC -XX:MaxGCPauseMillis=200` (balanced throughput/latency) or `-XX:+UseZGC`
     (lowest pause; generational by default on Java 25).
@@ -546,7 +585,7 @@ tuned with.
 | `KAFKA_TOPIC` | name (`reference-greetings`) | Topic of the Kafka example — provisioned by the platform, never created by the app. |
 | `KAFKA_GROUPID` | name (`reference-app`) | Consumer group; shared by all replicas of one deployment. |
 | `MANAGEMENT_SERVER_PORT` | port (`6080`) | Actuator side port (health, probes, prometheus, sbom, info). |
-| `JAVA_TOOL_OPTIONS` | JVM flags (unset) | Read by the JVM automatically — the deployment's standard flags (memory, GC, GC logging; see [§21](#21-the-container-image)). |
+| `JAVA_TOOL_OPTIONS` | JVM flags (unset) | Read by the JVM automatically — the deployment's standard flags (memory, GC, GC logging; see [§21](#21-the-container-image-two-jre-flavors)). |
 | `JVM_OPTS`, `JAVA_OPTS` | JVM flags (unset) | Appended explicitly by `entrypoint.sh` — ad-hoc additions on top of `JAVA_TOOL_OPTIONS`. |
 
 Secrets (`DB_*_PASSWORD`, cloud credentials) must come from the platform's secret store — never from
@@ -588,8 +627,8 @@ reference-app/
 ├── mvnw, mvnw.cmd                # Maven wrapper (pins 3.9.16)
 ├── mvnvm.properties              # mvnvm version pin (3.9.16)
 ├── compose.yaml                  # Floci / Azurite / PostgreSQL / k3s / Kafka (compose profiles aws / azure / db / k8s / kafka)
-├── Dockerfile                    # hardened base + `app` / `app-prebuilt` targets (§21)
-├── entrypoint.sh                 # container start; applies JVM_OPTS/JAVA_OPTS
+├── Dockerfile                    # two JRE flavors (Temurin/Alpine, Corretto/AL2023) + `app` / `app-prebuilt` targets (§21)
+├── entrypoint.sh                 # container start (POSIX sh); applies JVM_OPTS/JAVA_OPTS
 ├── db/init/01-roles.sql          # the expected DB role/permission layout (local bootstrap)
 ├── k8s/leader-election-rbac.yaml # the RBAC the leader election needs (deployed with the app)
 ├── .mvn/

@@ -10,7 +10,8 @@ description: >-
   changelogs), an optional Kubernetes API example (Lease-based leader election; k3s locally), an
   optional Kafka example (native kafka-clients — no spring-kafka —, a protobuf message contract
   without a schema registry, at-least-once consumption, Amazon MSK IAM auth as pure configuration), a
-  hardened multi-stage container image, and the ci-reports/ci-gates profiles with SBOM +
+  hardened multi-stage container image (JRE runtime; Temurin/Alpine or Corretto/AL2023 flavor per
+  build), and the ci-reports/ci-gates profiles with SBOM +
   Trivy/Grype + SpotBugs + license gates (coverage ≥ 80%). Use when asked to standardize, harden,
   modernize, migrate, or audit a project against reference-app, or to set up its build/CI to match
   the fleet standard.
@@ -169,6 +170,15 @@ Add the rules from reference-app §3. **Expect failures on a real project** and 
   `.mvn/maven.config`: `-Dorg.slf4j.simpleLogger.log.com.networknt.schema=error`. There is no
   skip-validation flag.
 
+### L. The container image
+- Mirror the reference `Dockerfile`: the app runs on a **JRE**, built on the matching JDK in a
+  throwaway stage; flavor chosen by `JAVA_FLAVOR` (`temurin-alpine` default, `corretto-al2023` for
+  glibc-only native libraries), OS upgraded in the base stage, non-root numeric `USER`, `/tmp` the
+  only writable path, `JAVA_TOOL_OPTIONS`-driven JVM config, POSIX `sh` entrypoint (Alpine has no
+  bash/curl). Before choosing Alpine, check the project's native-library dependencies: snappy-java
+  needs `gcompat`; anything without a musl build or `gcompat` compatibility means `corretto-al2023`.
+- Keep the image build out of Maven; it is the pipeline's step after `verify -Dci-gates`.
+
 ## Known pitfalls (these cost real time in reference-app)
 
 | Symptom | Cause / fix |
@@ -186,6 +196,8 @@ Add the rules from reference-app §3. **Expect failures on a real project** and 
 | logback `<if condition=>` deprecation WARN | switch to class-based `<condition>` element. |
 | Profile group not expanded in a `@SpringBootTest` | `@ActiveProfiles` bypasses Spring Boot's group expansion → activate via the `spring.profiles.active` PROPERTY; and remember the test-classpath `application.yaml` SHADOWS main's, so repeat the group definition there. |
 | Coverage/SpotBugs gates red after adding protobuf codegen | generated classes must be excluded in BOTH: JaCoCo `<excludes>` (in ci-reports AND ci-gates) and SpotBugs `excludeFilterFile`. |
+| protoc fails on Alpine with "program not found or is not executable" | the Boot parent's managed `protobuf-maven-plugin` config adds the gRPC generator (a glibc-only binary); without gRPC services clear it with `<plugins combine.self="override"/>`. |
+| Prebuilt jar counted twice in the image | do the "exactly one jar" check in a throwaway stage and `COPY --from` the result; a `COPY` + `RUN mv` in the final stage stores the jar in two layers. |
 
 ## Verification (do this, don't assume)
 

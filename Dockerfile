@@ -1,56 +1,118 @@
 # syntax=docker/dockerfile:1
 #
-# reference-app container image. Multi-stage with TWO selectable final targets:
+# reference-app container image. Multi-stage, with TWO selectable Java flavors and TWO final targets:
 #
 #   docker build --target app-prebuilt -t reference-app .   # package a host-built jar (CI: mvn verify ran already)
 #   docker build --target app          -t reference-app .   # full in-image build (no local JDK/Maven needed)
+#   docker build --build-arg JAVA_FLAVOR=corretto-al2023 --target app-prebuilt -t reference-app .
 #
-# Build args (all optional — defaults produce the production flavor):
-#   JAVA_VERSION                              JDK/base line (default 25)
-#   BASE_IMAGE                                the base to build on (default amazoncorretto:${JAVA_VERSION}).
-#                                             RELEASE POSTURE: pass a digest-pinned reference
-#                                             (amazoncorretto@sha256:...) together with
+# Flavors (JAVA_FLAVOR) — picked from the java-base-image survey. The app RUNS on a JRE; the jar is
+# BUILT on the matching JDK:
+#   temurin-alpine    (default) Eclipse Temurin JRE on Alpine — musl libc; the smallest image with the
+#                     fewest findings. Alpine ships busybox (sh, wget, adduser) but no bash or curl.
+#   corretto-al2023   Amazon Corretto headless JRE on Amazon Linux 2023 — glibc; for workloads whose
+#                     native libraries have no musl build (see README §21).
+#
+# Build args (all optional — defaults produce the production image of the default flavor):
+#   JAVA_VERSION                              Java line (default 25); only feeds the default image tags
+#   JAVA_FLAVOR                               temurin-alpine | corretto-al2023
+#   TEMURIN_ALPINE_IMAGE, TEMURIN_ALPINE_JDK_IMAGE, CORRETTO_AL2023_IMAGE, CORRETTO_AL2023_JDK_IMAGE
+#                                             runtime (JRE) and builder (JDK) image of each flavor.
+#                                             RELEASE POSTURE: pass digest-pinned references
+#                                             (eclipse-temurin@sha256:...) together with
 #                                             OS_UPGRADE=false for a REPRODUCIBLE image — patching
 #                                             then happens by bumping the digest deliberately.
-#   OS_UPGRADE                                true (default): dnf upgrade to the latest releasever;
-#                                             false: keep the base image's package versions
+#   OS_UPGRADE                                true (default): upgrade the OS packages (apk upgrade /
+#                                             dnf upgrade --releasever=latest); false: keep the base
+#                                             image's package versions
 #   CACHEBUST                                 pass e.g. the build timestamp to re-run the upgrade
 #                                             past Docker's layer cache (rebuilds pick up OS patches)
-#   BASE_PACKAGES                             extra packages ALWAYS installed (default: none — the
-#                                             production set is deliberately minimal)
-#   DEV_PACKAGES                              the developer toolset (see default below)
+#   BASE_PACKAGES                             extra packages ALWAYS installed, in the flavor's package
+#                                             names (default: none — the production set is minimal)
+#   DEV_PACKAGES                              the developer toolset; the default differs per flavor
+#                                             because package names do (see the base stages)
 #   INCLUDE_DEV_PACKAGES                      true: also install DEV_PACKAGES — build a debug/dev
-#                                             flavor of ANY target, including the app images, for
+#                                             variant of ANY target, including the app images, for
 #                                             troubleshooting environments (default false)
 #   APP_USER / APP_GROUP / APP_UID / APP_GID  runtime identity (default javauser/javagroup, 1000/1000)
 #   APP_HOME                                  the user's home + workdir + jar location (default /app)
-#   APP_SHELL                                 the user's shell (default /bin/bash)
+#   APP_SHELL                                 the user's shell (default /bin/sh — present in both flavors)
 #   IMAGE_REVISION / IMAGE_VERSION / IMAGE_CREATED
 #                                             OCI annotations, supplied by the pipeline from git:
 #                                             rev-parse HEAD / the git-derived version / the commit
 #                                             timestamp — they tie the image to the SBOM and
 #                                             /actuator/info
 #   CUSTOM_TRUSTED_ROOT_CA_CERTIFICATE_URL    optional extra trusted root CA, fetched at build time
+#                                             into the OS trust store AND the JVM's cacerts
 #
-# In a fleet setup the `base` stage is typically maintained as a SEPARATE, shared, hardened base
-# image — published in two flavors from the same file (e.g. java-base:25-latest and, with
-# INCLUDE_DEV_PACKAGES=true, java-base:25-dev-latest); it is inlined here so the reference is
-# self-contained. The runtime JVM is configured via env vars, not baked in — see entrypoint.sh
-# and the README's environment-variable table (JAVA_TOOL_OPTIONS / JVM_OPTS, GC selection).
+# In a fleet setup the `base-*` stages are typically maintained as SEPARATE, shared, hardened base
+# images — published per flavor, each in two variants from the same file (e.g. java-base:25-alpine
+# and, with INCLUDE_DEV_PACKAGES=true, java-base:25-alpine-dev); they are inlined here so the
+# reference is self-contained. The runtime JVM is configured via env vars, not baked in — see
+# entrypoint.sh and the README's environment-variable table (JAVA_TOOL_OPTIONS / JVM_OPTS, GC).
 
 ARG JAVA_VERSION=25
-ARG BASE_IMAGE=amazoncorretto:${JAVA_VERSION}
+ARG JAVA_FLAVOR=temurin-alpine
+# Alpine tags carry the Alpine minor on purpose: the bare `-alpine` tag silently moves to the next
+# Alpine release. Corretto publishes its JRE only as the AL2023 `-headless` package/image.
+ARG TEMURIN_ALPINE_IMAGE=eclipse-temurin:${JAVA_VERSION}-jre-alpine-3.24
+ARG TEMURIN_ALPINE_JDK_IMAGE=eclipse-temurin:${JAVA_VERSION}-jdk-alpine-3.24
+ARG CORRETTO_AL2023_IMAGE=amazoncorretto:${JAVA_VERSION}-al2023-headless
+ARG CORRETTO_AL2023_JDK_IMAGE=amazoncorretto:${JAVA_VERSION}-al2023-jdk
 
 ## ---------------------------------------------------------------------------
-## Stage: base — hardened runtime base (patched, non-root, minimal by default)
+## Stage: base-temurin-alpine — hardened runtime base, musl (patched, non-root, minimal)
 ## ---------------------------------------------------------------------------
-FROM ${BASE_IMAGE} AS base
+FROM ${TEMURIN_ALPINE_IMAGE} AS base-temurin-alpine
+ARG TEMURIN_ALPINE_IMAGE
+LABEL org.opencontainers.image.base.name="${TEMURIN_ALPINE_IMAGE}"
 
 ARG OS_UPGRADE=true
-# Changing CACHEBUST invalidates this layer so the dnf upgrade actually runs on rebuilds.
+# Changing CACHEBUST invalidates this layer so the upgrade actually runs on rebuilds.
 ARG CACHEBUST=1
 ARG BASE_PACKAGES=""
-# The debug toolset: viewers/editors, file tools, process/system and network diagnostics.
+# The debug toolset: viewers/editors, file tools, process/system and network diagnostics (Alpine names).
+ARG DEV_PACKAGES="less vim nano jq file findutils tar unzip procps lsof strace iputils iproute2 netcat-openbsd traceroute bind-tools tcpdump"
+ARG INCLUDE_DEV_PACKAGES=false
+ARG APP_USER=javauser
+ARG APP_GROUP=javagroup
+ARG APP_UID=1000
+ARG APP_GID=1000
+ARG APP_HOME=/app
+ARG APP_SHELL=/bin/sh
+ARG CUSTOM_TRUSTED_ROOT_CA_CERTIFICATE_URL=""
+
+# gcompat: snappy-java (on the classpath via kafka-clients) ships a glibc-linked .so and fails to
+# load on musl without this ~300 KB shim; zstd-jni, lz4-java and JNA carry native musl builds.
+# The JVM's cacerts is the JDK's own file here (not the OS bundle), hence the keytool import.
+RUN set -eu; \
+    if [ "${OS_UPGRADE}" = "true" ]; then apk upgrade --no-cache; fi; \
+    PACKAGES="gcompat ${BASE_PACKAGES}"; \
+    if [ "${INCLUDE_DEV_PACKAGES}" = "true" ]; then PACKAGES="${PACKAGES} ${DEV_PACKAGES}"; fi; \
+    apk add --no-cache ${PACKAGES}; \
+    addgroup -S -g "${APP_GID}" "${APP_GROUP}"; \
+    adduser -S -D -u "${APP_UID}" -G "${APP_GROUP}" -h "${APP_HOME}" -s "${APP_SHELL}" "${APP_USER}"; \
+    if [ -n "${CUSTOM_TRUSTED_ROOT_CA_CERTIFICATE_URL}" ]; then \
+        mkdir -p /usr/local/share/ca-certificates; \
+        wget -q -O /usr/local/share/ca-certificates/custom-root-ca.crt "${CUSTOM_TRUSTED_ROOT_CA_CERTIFICATE_URL}"; \
+        update-ca-certificates; \
+        keytool -importcert -noprompt -cacerts -storepass changeit -alias custom-root-ca \
+            -file /usr/local/share/ca-certificates/custom-root-ca.crt; \
+    fi
+
+WORKDIR ${APP_HOME}
+
+## ---------------------------------------------------------------------------
+## Stage: base-corretto-al2023 — hardened runtime base, glibc (patched, non-root, minimal)
+## ---------------------------------------------------------------------------
+FROM ${CORRETTO_AL2023_IMAGE} AS base-corretto-al2023
+ARG CORRETTO_AL2023_IMAGE
+LABEL org.opencontainers.image.base.name="${CORRETTO_AL2023_IMAGE}"
+
+ARG OS_UPGRADE=true
+ARG CACHEBUST=1
+ARG BASE_PACKAGES=""
+# The same toolset in Amazon Linux package names.
 ARG DEV_PACKAGES="less vim nano jq file findutils tar unzip procps-ng lsof strace iputils iproute nmap-ncat traceroute bind-utils tcpdump"
 ARG INCLUDE_DEV_PACKAGES=false
 ARG APP_USER=javauser
@@ -58,9 +120,11 @@ ARG APP_GROUP=javagroup
 ARG APP_UID=1000
 ARG APP_GID=1000
 ARG APP_HOME=/app
-ARG APP_SHELL=/bin/bash
+ARG APP_SHELL=/bin/sh
+ARG CUSTOM_TRUSTED_ROOT_CA_CERTIFICATE_URL=""
 
-# shadow-utils (groupadd/useradd) is tooling for this layer only — removed at the end.
+# shadow-utils (groupadd/useradd) is tooling for this layer only — removed at the end. Corretto's
+# cacerts is a symlink into the OS trust store, so update-ca-trust alone covers the JVM.
 RUN set -eu; \
     DNF="dnf -y --setopt=install_weak_deps=False"; \
     if [ "${OS_UPGRADE}" = "true" ]; then DNF="${DNF} --releasever=latest"; ${DNF} upgrade; fi; \
@@ -70,19 +134,32 @@ RUN set -eu; \
     groupadd --system --gid "${APP_GID}" "${APP_GROUP}"; \
     useradd --uid "${APP_UID}" --gid "${APP_GID}" --no-user-group \
         --home-dir "${APP_HOME}" --create-home --shell "${APP_SHELL}" "${APP_USER}"; \
-    chown -R "${APP_USER}:${APP_GROUP}" "${APP_HOME}"; \
     dnf -y remove shadow-utils; \
+    if [ -n "${CUSTOM_TRUSTED_ROOT_CA_CERTIFICATE_URL}" ]; then \
+        curl -fsS -o /etc/pki/ca-trust/source/anchors/custom-root-ca.crt "${CUSTOM_TRUSTED_ROOT_CA_CERTIFICATE_URL}"; \
+        update-ca-trust; \
+    fi; \
     dnf -y clean all; \
     rm -rf /var/cache/dnf
 
 WORKDIR ${APP_HOME}
 
 ## ---------------------------------------------------------------------------
-## Stage: builder — build the jar inside the image (only used by --target app).
+## Stage: base — the selected flavor
 ## ---------------------------------------------------------------------------
-FROM base AS builder
-# The Maven wrapper needs tar to unpack the pinned Maven distribution.
+FROM base-${JAVA_FLAVOR} AS base
+
+## ---------------------------------------------------------------------------
+## Stage: builder — build the jar on the flavor's JDK (only used by --target app).
+## Throwaway stage: nothing of it ships, so it is not patched or de-rooted.
+## ---------------------------------------------------------------------------
+FROM ${TEMURIN_ALPINE_JDK_IMAGE} AS jdk-temurin-alpine
+# busybox already provides the tar/gzip/wget the Maven wrapper needs.
+
+FROM ${CORRETTO_AL2023_JDK_IMAGE} AS jdk-corretto-al2023
 RUN dnf -y --setopt=install_weak_deps=False install tar gzip && dnf -y clean all && rm -rf /var/cache/dnf
+
+FROM jdk-${JAVA_FLAVOR} AS builder
 WORKDIR /build
 # Exactly what `package -DskipTests` consumes: the wrapper + POM, the git history
 # (the project version is derived from git), and the sources.
@@ -112,18 +189,13 @@ LABEL org.opencontainers.image.title="reference-app" \
       org.opencontainers.image.version="${IMAGE_VERSION}" \
       org.opencontainers.image.created="${IMAGE_CREATED}"
 
-# Optionally trust a custom root CA (e.g. a corporate TLS-inspection or internal CA).
-ARG CUSTOM_TRUSTED_ROOT_CA_CERTIFICATE_URL
-RUN if [ -n "${CUSTOM_TRUSTED_ROOT_CA_CERTIFICATE_URL}" ]; then \
-        curl "${CUSTOM_TRUSTED_ROOT_CA_CERTIFICATE_URL}" -o "/etc/pki/ca-trust/source/anchors/${CUSTOM_TRUSTED_ROOT_CA_CERTIFICATE_URL##*/}" && \
-        update-ca-trust ; \
-    fi
-
 # 8080: application traffic; 6080: actuator (health/metrics/sbom) side port.
 EXPOSE 8080 6080
 
 # Local-run convenience only — Kubernetes ignores container HEALTHCHECKs (it uses probes).
-HEALTHCHECK CMD curl --fail http://localhost:6080/actuator/health || exit 1
+# Alpine has busybox wget, Amazon Linux has curl: whichever exists does the probe.
+HEALTHCHECK CMD wget -q --spider http://localhost:6080/actuator/health 2>/dev/null \
+    || curl -fsS -o /dev/null http://localhost:6080/actuator/health
 
 # entrypoint.sh reads APP_HOME to find the jar.
 ENV APP_HOME=${APP_HOME}
@@ -147,14 +219,18 @@ COPY --from=builder --chown=${APP_USER}:${APP_GROUP} /build/target/*.jar ${APP_H
 
 # app-prebuilt: jar built on the host / in CI (`./mvnw package` first). With several
 # jars in target/ COPY would silently pick one — fail loudly unless there is exactly one.
-FROM app-common AS app-prebuilt
-ARG APP_USER=javauser
-ARG APP_GROUP=javagroup
-ARG APP_HOME=/app
-COPY --chown=${APP_USER}:${APP_GROUP} target/*.jar ${APP_HOME}/jars/
-RUN count=$(ls ${APP_HOME}/jars/*.jar | wc -l) && \
+# The check runs in a throwaway stage so the final image carries the jar in ONE layer.
+FROM base AS prebuilt-jar
+COPY target/*.jar /jars/
+RUN count=$(ls /jars/*.jar | wc -l) && \
     if [ "$count" -ne 1 ]; then \
         echo "ERROR: expected exactly 1 jar in target/, found $count — run './mvnw clean package' first" >&2; \
         exit 1; \
     fi && \
-    mv ${APP_HOME}/jars/*.jar ${APP_HOME}/app.jar && rmdir ${APP_HOME}/jars
+    mv /jars/*.jar /app.jar
+
+FROM app-common AS app-prebuilt
+ARG APP_USER=javauser
+ARG APP_GROUP=javagroup
+ARG APP_HOME=/app
+COPY --from=prebuilt-jar --chown=${APP_USER}:${APP_GROUP} /app.jar ${APP_HOME}/app.jar
