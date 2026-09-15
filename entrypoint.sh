@@ -10,7 +10,8 @@
 #
 # The JDK AOT cache (app.aot, produced by the image build's training run) is passed when present.
 # A cache the JVM cannot use (different GC / pointer mode than the training run) is skipped with
-# a warning and the app starts normally, just slower.
+# a warning and the app starts normally, just slower. SPRING_AOT (image default false) selects
+# Spring's build-time-generated bean registrations; see the Dockerfile header for the constraints.
 #
 #   run (default)  start the application
 #   <anything else> executed as-is (e.g. `sh` for debugging)
@@ -21,6 +22,6 @@ if [ "${1:-run}" = "run" ]; then
     AOT_CACHE=""
     if [ -s "${APP_HOME}/app.aot" ]; then AOT_CACHE="-XX:AOTCache=${APP_HOME}/app.aot"; fi
     # shellcheck disable=SC2086
-    exec java ${AOT_CACHE} ${JVM_OPTS:-} ${JAVA_OPTS:-} -jar "${APP_HOME}/app.jar"
+    exec java ${AOT_CACHE} -Dspring.aot.enabled="${SPRING_AOT:-false}" ${JVM_OPTS:-} ${JAVA_OPTS:-} -jar "${APP_HOME}/app.jar"
 fi
 exec "$@"

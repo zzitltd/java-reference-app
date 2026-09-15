@@ -542,6 +542,24 @@ The rest of the design is flavor-independent:
   here), so a startup-sensitive service should stay on G1. Classes from **signed jars** (the Azure
   SDK) cannot be cached and load the normal way. The `app.aot` file is not byte-reproducible; a
   reproducible *release* image should compare layers, not the whole digest, or drop the cache.
+- **Spring AOT (opt-in, `SPRING_AOT=true`).** The build always runs `spring-boot:process-aot`: Spring
+  boots the context in analysis mode at *build* time, evaluates every auto-configuration and bean
+  condition, and compiles direct bean registrations into the jar (+360 KB, +5 s build). With
+  `-Dspring.aot.enabled=true` — set by `entrypoint.sh` from the `SPRING_AOT` env/build arg — startup
+  skips classpath scanning and condition evaluation: measured **~0.62 s instead of ~0.78 s** natively on
+  top of the JDK cache. It is **off by default in the reference** for two reasons:
+  1. *The bean graph is frozen at processing time.* `@ConditionalOnProperty` / `@Profile` are decided
+     during `process-aot` (with no profile active unless `-Dspring-boot.aot.profiles=…` is given), so a
+     runtime `SPRING_PROFILES_ACTIVE=aws,db` no longer adds beans. Right for a service with a fixed
+     feature set — name its production profiles in the plugin's `<profiles>` and build the image with
+     `SPRING_AOT=true` — wrong for the reference's runtime-selected features.
+  2. *Signed jars.* Spring generates the registrations into the package of each bean; for the Spring
+     Cloud Azure auto-configurations that package lives in a **signed** jar, and the JVM refuses to
+     mix signed and unsigned classes in one package (`SecurityException` at startup). While those
+     auto-configurations are active (they are, even with Blob disabled), AOT mode cannot start; a
+     service that does not use Azure removes the starter, one that does cannot use Spring AOT today.
+  The AOT training run honours the same flag, so the JDK cache matches the AOT-mode class set.
+  Generated classes (`*__BeanDefinitions` etc.) are excluded from coverage and SpotBugs.
 - **Reproducible release builds**: pass the flavor's image args as digest pins
   (`TEMURIN_ALPINE_IMAGE=eclipse-temurin@sha256:…`, same for the JDK) together with
   `OS_UPGRADE=false` and the image builds from exactly the same inputs every time — the
@@ -603,6 +621,7 @@ tuned with.
 | `KAFKA_TOPIC` | name (`reference-greetings`) | Topic of the Kafka example — provisioned by the platform, never created by the app. |
 | `KAFKA_GROUPID` | name (`reference-app`) | Consumer group; shared by all replicas of one deployment. |
 | `MANAGEMENT_SERVER_PORT` | port (`6080`) | Actuator side port (health, probes, prometheus, sbom, info). |
+| `SPRING_AOT` | `true`/`false` (image default `false`) | Start with Spring's build-time-generated bean registrations (§21). Only for a fixed feature set processed with the right profiles; incompatible with the signed Azure auto-configurations. |
 | `JAVA_TOOL_OPTIONS` | JVM flags (unset) | Read by the JVM automatically — the deployment's standard flags (memory, GC, GC logging; see [§21](#21-the-container-image-two-jre-flavors)). A GC other than the one the AOT cache was trained with disables the cache. |
 | `JVM_OPTS`, `JAVA_OPTS` | JVM flags (unset) | Appended explicitly by `entrypoint.sh` — ad-hoc additions on top of `JAVA_TOOL_OPTIONS`. |
 

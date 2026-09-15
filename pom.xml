@@ -463,10 +463,16 @@
 				<artifactId>spring-boot-maven-plugin</artifactId>
 				<executions>
 					<execution>
-						<!-- Emit META-INF/build-info.properties for the actuator /info endpoint.
+						<!-- build-info: META-INF/build-info.properties for the actuator /info endpoint.
+						     process-aot: Spring AOT — evaluates the auto-configuration and bean conditions
+						     at build time and compiles generated bean registrations into the jar; the
+						     runtime only uses them with -Dspring.aot.enabled=true. Conditions are FROZEN
+						     to the profiles active during processing (spring-boot.aot.profiles, default
+						     none): a service with a fixed feature set names its production profiles there.
 						     'repackage' is still inherited from the parent's plugin management. -->
 						<goals>
 							<goal>build-info</goal>
+							<goal>process-aot</goal>
 						</goals>
 					</execution>
 				</executions>
@@ -627,11 +633,14 @@
 								<format>XML</format>
 								<format>CSV</format>
 							</formats>
-							<!-- protobuf-GENERATED classes (see the protobuf-maven-plugin): thousands
-							     of machine-written instructions nobody hand-tests — they would distort
-							     the ratio. Mirrored in ci-gates so both profiles measure the same code. -->
+							<!-- GENERATED classes: protobuf (see the protobuf-maven-plugin) and Spring AOT
+							     (*__BeanDefinitions, $$SpringCGLIB$$ proxies; see process-aot) — thousands of machine-written
+							     instructions nobody hand-tests, they would distort the ratio. Mirrored in
+							     ci-gates so both profiles measure the same code. -->
 							<excludes>
 								<exclude>hu/zzit/reference/kafka/event/**</exclude>
+								<exclude>**/*__*</exclude>
+								<exclude>**/*$$*</exclude>
 							</excludes>
 						</configuration>
 						<executions>
@@ -830,10 +839,12 @@
 						<artifactId>jacoco-maven-plugin</artifactId>
 						<version>${jacoco-maven-plugin.version}</version>
 						<configuration>
-							<!-- Same exclusion as ci-reports: protobuf-generated classes stay out of
-							     the instrumentation AND the coverage-check ratio. -->
+							<!-- Same exclusions as ci-reports: generated classes stay out of the
+							     instrumentation AND the coverage-check ratio. -->
 							<excludes>
 								<exclude>hu/zzit/reference/kafka/event/**</exclude>
+								<exclude>**/*__*</exclude>
+								<exclude>**/*$$*</exclude>
 							</excludes>
 						</configuration>
 						<executions>

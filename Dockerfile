@@ -23,6 +23,13 @@
 #   JAVA_FLAVOR                               temurin-alpine | corretto-al2023
 #   JAR_SOURCE                                prebuilt (default): target/*.jar from the build context;
 #                                             build: compile + package in the `builder` stage
+#   SPRING_AOT                                false (default) | true: run with Spring AOT (the bean
+#                                             registrations process-aot generated at build time —
+#                                             no classpath scanning or condition evaluation at
+#                                             startup). ONLY for a fixed feature set: conditions were
+#                                             evaluated at build time, runtime profiles no longer add
+#                                             beans. Fails at startup while the (signed) Azure
+#                                             auto-configurations are active — see README §21.
 #   AOT_TRAINING_JVM_OPTS                     JVM flags for the AOT training run (default: none = G1,
 #                                             compressed oops). MUST match what the deployment sets in
 #                                             JAVA_TOOL_OPTIONS for GC and pointer mode — a cache
@@ -256,10 +263,14 @@ ARG APP_USER=javauser
 ARG APP_GROUP=javagroup
 ARG APP_HOME=/app
 ARG AOT_TRAINING_JVM_OPTS=""
+ARG SPRING_AOT=false
+# entrypoint.sh passes it on as -Dspring.aot.enabled; overridable per deployment.
+ENV SPRING_AOT=${SPRING_AOT}
 COPY --from=extracted --chown=${APP_USER}:${APP_GROUP} /extracted/ ${APP_HOME}/
 # Training run as the runtime user on the runtime JVM: the cache is only valid for this exact JVM
 # build and classpath. spring.context.exit=onRefresh stops the app right after the context is up;
 # no profile is active, so nothing external is contacted. entrypoint.sh adds -XX:AOTCache.
-RUN java ${AOT_TRAINING_JVM_OPTS} -XX:AOTCacheOutput=${APP_HOME}/app.aot -Dspring.context.exit=onRefresh \
+RUN java ${AOT_TRAINING_JVM_OPTS} -Dspring.aot.enabled=${SPRING_AOT} \
+        -XX:AOTCacheOutput=${APP_HOME}/app.aot -Dspring.context.exit=onRefresh \
         -jar ${APP_HOME}/app.jar > /dev/null && \
     test -s ${APP_HOME}/app.aot

@@ -9,4 +9,10 @@
 	<Match>
 		<Package name="hu.zzit.reference.kafka.event"/>
 	</Match>
+	<!-- Spring AOT-GENERATED code (spring-boot-maven-plugin:process-aot): bean registrations
+	     (double underscore) and pre-generated CGLIB configuration proxies ($$SpringCGLIB$$),
+	     emitted into the packages of the beans they serve. -->
+	<Match>
+		<Class name="~.*(__|\$\$).*"/>
+	</Match>
 </FindBugsFilter>
