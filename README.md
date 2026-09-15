@@ -569,6 +569,10 @@ The rest of the design is flavor-independent:
   for the default image. Beyond that, the classpath is trimmed by **deleting**: a derived service
   removes the starters, adapters, profiles and tests of the features it does not use — jars on the
   classpath cost startup (opened, scanned for auto-configuration candidates) even when unused.
+  Measured ceiling: with all five optional features deleted (94 instead of 231 jars, a 28 MB instead
+  of 107 MB fat jar, 170 MB less image) the container starts ~120 ms faster (1.05 → 0.93 s, or 0.87 →
+  0.81 s in AOT mode). Worth doing for the image size and the vulnerability surface; for startup it is
+  the smallest of the three levers, which is why there are no build-time feature switches.
 - **Reproducible release builds**: pass the flavor's image args as digest pins
   (`TEMURIN_ALPINE_IMAGE=eclipse-temurin@sha256:…`, same for the JDK) together with
   `OS_UPGRADE=false` and the image builds from exactly the same inputs every time — the
