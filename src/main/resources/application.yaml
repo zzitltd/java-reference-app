@@ -28,8 +28,21 @@ spring:
     # autoconfiguration must not run — it would fail without config (no URL).
     # Liquibase stays autoconfigured: it migrates through the primary pool and backs
     # off entirely while no DataSource beans exist (db.enabled=false).
+    # The cloud SDKs' CORE autoconfigurations (credential/region providers, Azure global
+    # properties) are not behind the s3/blob enable-flags below and would run — and create
+    # beans — on every start; with them out, the default startup is ~100 ms faster and
+    # Spring AOT mode is possible (the Azure jars are signed, see README §21). The `aws` /
+    # `azure` profiles override this list to let their own SDK back in (a list property is
+    # replaced, not merged — the two providers are not meant to be combined).
     exclude:
       - org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration
+      - io.awspring.cloud.autoconfigure.core.AwsAutoConfiguration
+      - io.awspring.cloud.autoconfigure.core.CredentialsProviderAutoConfiguration
+      - io.awspring.cloud.autoconfigure.core.RegionProviderAutoConfiguration
+      - com.azure.spring.cloud.autoconfigure.implementation.context.AzureGlobalPropertiesAutoConfiguration
+      - com.azure.spring.cloud.autoconfigure.implementation.context.AzureTokenCredentialAutoConfiguration
+      - com.azure.spring.cloud.autoconfigure.implementation.storage.blob.AzureStorageBlobAutoConfiguration
+      - com.azure.spring.cloud.autoconfigure.implementation.storage.blob.AzureStorageBlobResourceAutoConfiguration
   cloud:
     # Both cloud SDKs are on the classpath, but their autoconfiguration is OFF by
     # default — cloud support is optional. The `aws` / `azure` profiles turn exactly

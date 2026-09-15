@@ -18,9 +18,17 @@ spring:
       enabled: false
   autoconfigure:
     # See src/main/resources/application.yaml — DatabaseConfiguration owns the runtime
-    # pools; Liquibase autoconfiguration backs off while no DataSource beans exist.
+    # pools; Liquibase autoconfiguration backs off while no DataSource beans exist, and the
+    # cloud SDKs' core autoconfigurations stay out until the aws/azure profile lets them in.
     exclude:
       - org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration
+      - io.awspring.cloud.autoconfigure.core.AwsAutoConfiguration
+      - io.awspring.cloud.autoconfigure.core.CredentialsProviderAutoConfiguration
+      - io.awspring.cloud.autoconfigure.core.RegionProviderAutoConfiguration
+      - com.azure.spring.cloud.autoconfigure.implementation.context.AzureGlobalPropertiesAutoConfiguration
+      - com.azure.spring.cloud.autoconfigure.implementation.context.AzureTokenCredentialAutoConfiguration
+      - com.azure.spring.cloud.autoconfigure.implementation.storage.blob.AzureStorageBlobAutoConfiguration
+      - com.azure.spring.cloud.autoconfigure.implementation.storage.blob.AzureStorageBlobResourceAutoConfiguration
   cloud:
     aws:
       s3:

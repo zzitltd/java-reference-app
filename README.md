@@ -555,11 +555,20 @@ The rest of the design is flavor-independent:
      `SPRING_AOT=true` — wrong for the reference's runtime-selected features.
   2. *Signed jars.* Spring generates the registrations into the package of each bean; for the Spring
      Cloud Azure auto-configurations that package lives in a **signed** jar, and the JVM refuses to
-     mix signed and unsigned classes in one package (`SecurityException` at startup). While those
-     auto-configurations are active (they are, even with Blob disabled), AOT mode cannot start; a
-     service that does not use Azure removes the starter, one that does cannot use Spring AOT today.
+     mix signed and unsigned classes in one package (`SecurityException` at startup). The default
+     configuration keeps those auto-configurations excluded (see below), so the default image runs in
+     AOT mode; a service processed with the `azure` profile cannot use Spring AOT today.
   The AOT training run honours the same flag, so the JDK cache matches the AOT-mode class set.
-  Generated classes (`*__BeanDefinitions` etc.) are excluded from coverage and SpotBugs.
+  Generated classes (`*__BeanDefinitions`, `$$SpringCGLIB$$` proxies) are excluded from coverage and
+  SpotBugs. Measured in the container: **1.05 s → 0.87 s** (Alpine) and **0.94 s → 0.82 s** (AL2023).
+- **Only the selected features run.** The cloud SDKs' *core* auto-configurations (AWS credentials and
+  region providers, Azure global properties and token credential) sit outside the `s3`/`blob`
+  enable-flags and would create beans on every start. `application.yaml` excludes them by default and
+  the `aws` / `azure` profiles override the exclusion list with the other provider's entries (a list
+  property is replaced, not merged). Worth ~100 ms per start here, and what makes AOT mode possible
+  for the default image. Beyond that, the classpath is trimmed by **deleting**: a derived service
+  removes the starters, adapters, profiles and tests of the features it does not use — jars on the
+  classpath cost startup (opened, scanned for auto-configuration candidates) even when unused.
 - **Reproducible release builds**: pass the flavor's image args as digest pins
   (`TEMURIN_ALPINE_IMAGE=eclipse-temurin@sha256:…`, same for the JDK) together with
   `OS_UPGRADE=false` and the image builds from exactly the same inputs every time — the

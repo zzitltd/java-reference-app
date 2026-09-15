@@ -5,6 +5,13 @@
 cloud:
   provider: azure
 spring:
+  autoconfigure:
+    # Base list minus the Azure autoconfigurations (see application.yaml).
+    exclude:
+      - org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration
+      - io.awspring.cloud.autoconfigure.core.AwsAutoConfiguration
+      - io.awspring.cloud.autoconfigure.core.CredentialsProviderAutoConfiguration
+      - io.awspring.cloud.autoconfigure.core.RegionProviderAutoConfiguration
   cloud:
     azure:
       storage:
