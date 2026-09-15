@@ -177,6 +177,10 @@ Add the rules from reference-app §3. **Expect failures on a real project** and 
   only writable path, `JAVA_TOOL_OPTIONS`-driven JVM config, POSIX `sh` entrypoint (Alpine has no
   bash/curl). Before choosing Alpine, check the project's native-library dependencies: snappy-java
   needs `gcompat`; anything without a musl build or `gcompat` compatibility means `corretto-al2023`.
+- Startup: never run the fat jar in the image — extract it (`java -Djarmode=tools -jar app.jar
+  extract`) and add a JDK AOT cache from a training run on the runtime JRE in the final stage
+  (`-XX:AOTCacheOutput` + `-Dspring.context.exit=onRefresh`), passed at runtime as `-XX:AOTCache`.
+  Train with the deployment's GC (`AOT_TRAINING_JVM_OPTS`); a G1-trained cache is rejected under ZGC.
 - Keep the image build out of Maven; it is the pipeline's step after `verify -Dci-gates`.
 
 ## Known pitfalls (these cost real time in reference-app)

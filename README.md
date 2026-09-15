@@ -65,8 +65,8 @@ Use the wrapper (`./mvnw`) — it pins Maven 3.9.16 to match the enforcer. On Wi
 | Run with **Kafka** locally (broker auto-started) | `./mvnw spring-boot:run -Dspring-boot.run.profiles=local-kafka` |
 | Run the packaged jar | `java -jar target/reference-app-*.jar` |
 | Switch console logs to JSON | add `--logging.json.enabled=true` |
-| Build the image from a host-built jar (Temurin on Alpine, the default flavor) | `docker build --target app-prebuilt -t reference-app .` |
-| Build the image incl. the jar (no local JDK needed) | `docker build --target app -t reference-app .` |
+| Build the image from a host-built jar (Temurin on Alpine, the default flavor) | `docker build -t reference-app .` |
+| Build the image incl. the jar (no local JDK needed) | `docker build --build-arg JAR_SOURCE=build -t reference-app .` |
 | Build the glibc flavor (Corretto on Amazon Linux 2023) | add `--build-arg JAVA_FLAVOR=corretto-al2023` |
 
 Generated artifacts after `-Pci-reports` land under `target/`: `site/jacoco-{unit,integration,merged}/`
@@ -460,13 +460,13 @@ drop the "missing binary is OK" tolerance — Trivy and Grype **must** be on the
 
 ### 21. The container image: two JRE flavors
 
-`Dockerfile` is multi-stage with **two selectable Java flavors** and **two selectable final targets**.
-The app **runs on a JRE**; the jar is **built on the matching JDK**:
+`Dockerfile` is multi-stage with **two selectable Java flavors** and **two jar sources**. The app
+**runs on a JRE**; the jar is **built on the matching JDK**:
 
 ```bash
-docker build --target app-prebuilt -t reference-app .   # package a host/CI-built jar (fast; CI already ran verify)
-docker build --target app          -t reference-app .   # full in-image build (no local JDK/Maven needed)
-docker build --build-arg JAVA_FLAVOR=corretto-al2023 --target app-prebuilt -t reference-app .
+docker build -t reference-app .                                # package a host/CI-built jar (fast; CI already ran verify)
+docker build --build-arg JAR_SOURCE=build -t reference-app .   # full in-image build (no local JDK/Maven needed)
+docker build --build-arg JAVA_FLAVOR=corretto-al2023 -t reference-app .
 ```
 
 | `JAVA_FLAVOR` | Runtime image | Builder image | libc | When |
@@ -525,6 +525,23 @@ The rest of the design is flavor-independent:
   the Spring Boot parent's managed `protobuf-maven-plugin` configuration adds the gRPC generator, a
   glibc-only binary that cannot run on Alpine — the POM clears that inherited plugin list (there are no
   gRPC services here).
+- **Fast startup: extracted jar + JDK AOT cache.** The final stage does not run the fat jar. Boot's
+  `extract` tool unpacks it into a thin launcher plus `lib/*.jar` (no nested-jar reading at startup,
+  and the classes become visible to the JVM's built-in class loader), and a **training run** at image
+  build time (`-XX:AOTCacheOutput`, exiting via `spring.context.exit=onRefresh`) writes a JDK AOT
+  cache (JEP 483/514/515) — the ~15,000 classes the app loads, already parsed, verified and linked,
+  plus method profiles — which `entrypoint.sh` passes as `-XX:AOTCache`. Measured here (readiness
+  probe from launch): fat jar ~2.3 s → extracted ~1.7 s → extracted + cache **~0.9 s** natively,
+  ~2.7 s → **~1.2 s** in the container. The cache costs ~86 MB of image and a ~5 s training run.
+  Constraints, both enforced by the build: the cache is valid only for the exact JVM that made it (so
+  training happens on the runtime JRE, in the final stage, as the runtime user) and the exact
+  classpath. And **the training JVM flags must match the deployment's** for GC and pointer mode: a
+  cache trained with the defaults (G1, compressed oops) is *rejected* — with a warning, falling back
+  to normal loading — when the runtime uses ZGC or a heap over 32 GB. For a ZGC deployment pass
+  `--build-arg AOT_TRAINING_JVM_OPTS=-XX:+UseZGC`; note that ZGC gains less from the cache (~1.8 s
+  here), so a startup-sensitive service should stay on G1. Classes from **signed jars** (the Azure
+  SDK) cannot be cached and load the normal way. The `app.aot` file is not byte-reproducible; a
+  reproducible *release* image should compare layers, not the whole digest, or drop the cache.
 - **Reproducible release builds**: pass the flavor's image args as digest pins
   (`TEMURIN_ALPINE_IMAGE=eclipse-temurin@sha256:…`, same for the JDK) together with
   `OS_UPGRADE=false` and the image builds from exactly the same inputs every time — the
@@ -545,8 +562,9 @@ The rest of the design is flavor-independent:
   - Memory: `-XX:MaxRAMPercentage=75.0` (never `-Xmx` in containers). On musl leave somewhat more
     headroom for native memory than on glibc.
   - GC: **G1 and ZGC are both valid choices** — select per workload:
-    `-XX:+UseG1GC -XX:MaxGCPauseMillis=200` (balanced throughput/latency) or `-XX:+UseZGC`
-    (lowest pause; generational by default on Java 25).
+    `-XX:+UseG1GC -XX:MaxGCPauseMillis=200` (balanced throughput/latency; fastest startup with the
+    AOT cache) or `-XX:+UseZGC` (lowest pause; generational by default on Java 25 — train the AOT
+    cache with the same flag, see above).
   - GC logging when needed: `-Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=5,filesize=10m`.
 - The image build is intentionally **not** wired into Maven — it's the delivery pipeline's step
   (`docker build` / Kaniko), after `./mvnw verify -Dci-gates` went green.
@@ -585,7 +603,7 @@ tuned with.
 | `KAFKA_TOPIC` | name (`reference-greetings`) | Topic of the Kafka example — provisioned by the platform, never created by the app. |
 | `KAFKA_GROUPID` | name (`reference-app`) | Consumer group; shared by all replicas of one deployment. |
 | `MANAGEMENT_SERVER_PORT` | port (`6080`) | Actuator side port (health, probes, prometheus, sbom, info). |
-| `JAVA_TOOL_OPTIONS` | JVM flags (unset) | Read by the JVM automatically — the deployment's standard flags (memory, GC, GC logging; see [§21](#21-the-container-image-two-jre-flavors)). |
+| `JAVA_TOOL_OPTIONS` | JVM flags (unset) | Read by the JVM automatically — the deployment's standard flags (memory, GC, GC logging; see [§21](#21-the-container-image-two-jre-flavors)). A GC other than the one the AOT cache was trained with disables the cache. |
 | `JVM_OPTS`, `JAVA_OPTS` | JVM flags (unset) | Appended explicitly by `entrypoint.sh` — ad-hoc additions on top of `JAVA_TOOL_OPTIONS`. |
 
 Secrets (`DB_*_PASSWORD`, cloud credentials) must come from the platform's secret store — never from
@@ -627,8 +645,8 @@ reference-app/
 ├── mvnw, mvnw.cmd                # Maven wrapper (pins 3.9.16)
 ├── mvnvm.properties              # mvnvm version pin (3.9.16)
 ├── compose.yaml                  # Floci / Azurite / PostgreSQL / k3s / Kafka (compose profiles aws / azure / db / k8s / kafka)
-├── Dockerfile                    # two JRE flavors (Temurin/Alpine, Corretto/AL2023) + `app` / `app-prebuilt` targets (§21)
-├── entrypoint.sh                 # container start (POSIX sh); applies JVM_OPTS/JAVA_OPTS
+├── Dockerfile                    # two JRE flavors (Temurin/Alpine, Corretto/AL2023); extracted jar + AOT cache (§21)
+├── entrypoint.sh                 # container start (POSIX sh); -XX:AOTCache, JVM_OPTS/JAVA_OPTS
 ├── db/init/01-roles.sql          # the expected DB role/permission layout (local bootstrap)
 ├── k8s/leader-election-rbac.yaml # the RBAC the leader election needs (deployed with the app)
 ├── .mvn/
