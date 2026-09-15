@@ -541,11 +541,13 @@ The rest of the design is flavor-independent:
   | 1 | 5.4 s | 4.3 s | 2.2 s | 1.8 s |
   | 2 | 2.8 s | 2.1 s | 1.2 s | 1.0 s |
   | 4 | 2.3 s | 1.9 s | 1.0 s | 0.8 s |
+  | 8 | 2.3 s | 1.9 s | 1.0 s | 0.8 s |
+  | 16 | 2.5 s | 2.1 s | 1.0 s | 0.8 s |
   | 32 | 2.6 s | 2.1 s | 1.1 s | 0.9 s |
 
   Size your pods' CPU *limit* with startup in mind (or allow bursting): at one vCPU the original layout
-  needs 5.4 s, and 32 vCPUs are slightly *slower* than 4 — the JVM sizes its GC and JIT thread pools
-  by CPU count.
+  needs 5.4 s. Startup stops improving at 4 vCPUs, and above 8 it gets slightly *slower* — the JVM
+  sizes its GC and JIT thread pools by CPU count.
   Constraints, both enforced by the build: the cache is valid only for the exact JVM that made it (so
   training happens on the runtime JRE, in the final stage, as the runtime user) and the exact
   classpath. And **the training JVM flags must match the deployment's** for GC and pointer mode: a
