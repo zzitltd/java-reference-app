@@ -177,6 +177,10 @@ documented in the `<properties>` block (currently: `msal4j` + JNA under `azure-i
   and add `spring-boot-starter-jetty`.
 - **Actuator on port 6080** (`management.server.port`), separate from application traffic —
   `health`, `info`, `sbom` and `prometheus` are exposed there and never mix with business traffic.
+- **Virtual threads** (`spring.threads.virtual.enabled`): requests run on virtual threads. Jetty then
+  caps concurrently handled requests with `server.jetty.threads.max` — the max tasks of its
+  `VirtualThreadPool`, **200 by default**. It is set explicitly (10000); size it to the concurrency the
+  service must hold. `JettyVirtualThreadsTest` asserts the pool type and the cap.
 - **Probes:** the Kubernetes-style liveness/readiness groups are enabled everywhere
   (`/actuator/health/{liveness,readiness}`), not just on Kubernetes.
 - **Metrics:** `micrometer-registry-prometheus` activates **`/actuator/prometheus`** with JVM,
@@ -625,6 +629,7 @@ tuned with.
 
 | Variable | Values (default) | Description |
 |---|---|---|
+| `SERVER_JETTY_THREADS_MAX` | int (`10000`) | Cap on concurrently handled requests (Jetty's virtual-thread pool, §8). |
 | `SPRING_PROFILES_ACTIVE` | `aws`, `azure`, `db`, `k8s`, `kafka`, `kafka-msk-iam`, `local-*` variants, combinable (none) | Feature selection. `aws`/`azure` pick the cloud adapter + SDK; `db` enables the database example; `k8s` the Kubernetes example; `kafka` the Kafka example (`kafka-msk-iam` = the same + MSK IAM auth); `local-*` variants add the compose-managed emulator/DB/k3s/broker. |
 | `CLOUD_PROVIDER` | `aws` \| `azure` \| `none` (`none`) | Which ObjectStorage adapter is active. Prefer setting it via the profiles above so the SDK enable-flags stay in sync. |
 | `LOGGING_JSON_ENABLED` | `true`/`false` (`false`) | Console in logback's default JSON format. Mutually exclusive with the custom JSON flag. |
@@ -734,6 +739,7 @@ reference-app/
         ├── java/hu/zzit/reference/                # tests mirror the package under test
         │   ├── ReferenceApplicationTests.java     # unit (surefire)
         │   ├── LoggingModeGuardTest.java          # unit: JSON-mode exclusivity
+        │   ├── JettyVirtualThreadsTest.java       # unit: virtual-thread pool + request cap
         │   ├── storage/ObjectStorageRetryTest.java # unit: retry policy
         │   ├── storage/ReferenceS3IT.java         # integration, AWS (failsafe)
         │   ├── storage/ReferenceAzureBlobIT.java  # integration, Azure (failsafe)
@@ -756,6 +762,12 @@ reference-app/
   integration test. Keep merged coverage ≥ 80% — the `ci-gates` profile enforces it.
 - **Cloud access:** depend on the `ObjectStorage` port (or a new port of the same shape), never on
   `S3Client`/`BlobServiceClient` directly; gate provider adapters on `cloud.provider`.
+- **Outbound HTTP on the JDK `HttpClient`:** give the client an executor —
+  `ClientHttpRequestFactoryBuilderCustomizer<JdkClientHttpRequestFactoryBuilder>` adding
+  `executor(Executors.newVirtualThreadPerTaskExecutor())`, or set it on a hand-built `HttpClient`.
+  Without one, Spring's JDK request factory writes each request body on a new platform thread. (On
+  this classpath Boot auto-detects Apache HttpComponents first; this applies wherever the JDK client is
+  chosen.)
 - **External calls:** declare an explicit retry/backoff policy (Spring's `@Retryable`) on idempotent
   operations only; add `@ConcurrencyLimit` (bulkhead) where a slow dependency could exhaust threads.
 - **Database access:** roles and permissions are provisioned with the database, never from

@@ -13,6 +13,9 @@ spring:
       # Repeated from the main application.yaml (shadowed, see above) so profile-group
       # behavior is testable: KafkaMskIamProfileTest asserts this expansion.
       kafka-msk-iam: kafka
+  threads:
+    virtual:
+      enabled: true
   docker:
     compose:
       enabled: false
@@ -37,6 +40,12 @@ spring:
       storage:
         blob:
           enabled: false
+
+# Repeated from the main application.yaml: JettyVirtualThreadsTest asserts the request cap.
+server:
+  jetty:
+    threads:
+      max: 10000
 
 cloud:
   provider: none

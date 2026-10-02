@@ -14,6 +14,10 @@ spring:
       # `kafka-msk-iam` only ADDS kafka.properties.* entries (disjoint from the member's
       # keys), so the group composes cleanly.
       kafka-msk-iam: kafka
+  threads:
+    virtual:
+      # Request handling and Spring's task executors/schedulers run on virtual threads.
+      enabled: true
   lifecycle:
     # Drain budget for graceful shutdown — must fit inside Kubernetes' termination
     # grace period (default 30s) with headroom for preStop hooks and JVM exit.
@@ -59,6 +63,11 @@ server:
   # On SIGTERM: readiness flips to false, in-flight requests drain (bounded by
   # spring.lifecycle.timeout-per-shutdown-phase above), then the app exits.
   shutdown: graceful
+  jetty:
+    threads:
+      # With virtual threads this is the cap on concurrently handled requests (the max tasks of Jetty's
+      # VirtualThreadPool), not a pool size — and it defaults to 200. Size it to the concurrency to hold.
+      max: 10000
 
 # Which ObjectStorage adapter to activate: aws | azure | none (default: no cloud at
 # all). Set via the `aws` / `azure` Spring profiles rather than directly, so the SDK

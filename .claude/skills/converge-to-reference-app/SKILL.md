@@ -206,6 +206,8 @@ Add the rules from reference-app §3. **Expect failures on a real project** and 
 | Profile group not expanded in a `@SpringBootTest` | `@ActiveProfiles` bypasses Spring Boot's group expansion → activate via the `spring.profiles.active` PROPERTY; and remember the test-classpath `application.yaml` SHADOWS main's, so repeat the group definition there. |
 | Coverage/SpotBugs gates red after adding protobuf codegen | generated classes must be excluded in BOTH: JaCoCo `<excludes>` (in ci-reports AND ci-gates) and SpotBugs `excludeFilterFile`. |
 | protoc fails on Alpine with "program not found or is not executable" | the Boot parent's managed `protobuf-maven-plugin` config adds the gRPC generator (a glibc-only binary); without gRPC services clear it with `<plugins combine.self="override"/>`. |
+| Requests queue at ~200 in flight although virtual threads are on | with `spring.threads.virtual.enabled`, Jetty's `VirtualThreadPool` caps concurrent tasks at `server.jetty.threads.max`, default 200 → set it explicitly (reference-app: 10000) in main AND test `application.yaml`. |
+| A platform thread per outbound request on the JDK `HttpClient` | Spring's JDK request factory runs request bodies on the client's executor and falls back to a new thread per request without one → give the `HttpClient` a virtual-thread executor (`ClientHttpRequestFactoryBuilderCustomizer<JdkClientHttpRequestFactoryBuilder>` or `HttpClient.newBuilder().executor(...)`). |
 | Prebuilt jar counted twice in the image | do the "exactly one jar" check in a throwaway stage and `COPY --from` the result; a `COPY` + `RUN mv` in the final stage stores the jar in two layers. |
 
 ## Verification (do this, don't assume)
