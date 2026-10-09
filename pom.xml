@@ -68,8 +68,17 @@
 		<surefire.jacoco.args></surefire.jacoco.args>
 		<failsafe.jacoco.args></failsafe.jacoco.args>
 
-		<!-- CVE overrides — none yet. Pin a vulnerable transitive dependency here, each tagged
-		     with its CVE/GHSA id, the version it supersedes, and the fix (see the cm/c360 POMs). -->
+		<!-- CVE overrides. Pin a vulnerable transitive dependency here, each tagged with its
+		     CVE/GHSA id, the version it supersedes, and the fix; drop the pin once the Spring Boot
+		     parent (or the depending library) manages the fixed version. -->
+		<!-- CVE-2026-89407, CVE-2026-89425 (jackson-core), CVE-2026-68497, CVE-2026-91776,
+		     CVE-2026-91777 (jackson-databind): Boot 4.1.1 manages Jackson 2.21.5 / 3.1.5; fixed in
+		     2.21.7 / 3.1.7. Both are Boot's own BOM properties. -->
+		<jackson-2-bom.version>2.21.7</jackson-2-bom.version>
+		<jackson-bom.version>3.1.7</jackson-bom.version>
+		<!-- CVE-2026-106451: kafka-clients brings at.yawk.lz4:lz4-java 1.10.1; fixed in 1.11.4.
+		     Not managed by Boot, hence the dependencyManagement entry. -->
+		<lz4-java.version>1.11.4</lz4-java.version>
 
 		<!-- Convergence pins: azure-identity's transitives are NOT managed by the Azure BOM and
 		     disagree (msal4j-persistence-extension lags azure-identity: msal4j 1.15.0 vs 1.23.1,
@@ -105,6 +114,12 @@
 				<groupId>org.apache.commons</groupId>
 				<artifactId>commons-text</artifactId>
 				<version>${commons-text.version}</version>
+			</dependency>
+			<!-- CVE pin (see the properties block). -->
+			<dependency>
+				<groupId>at.yawk.lz4</groupId>
+				<artifactId>lz4-java</artifactId>
+				<version>${lz4-java.version}</version>
 			</dependency>
 			<!-- Spring Cloud AWS BOM: manages the io.awspring.cloud starters and a
 			     compatible AWS SDK v2 version, so individual AWS deps need no version. -->
