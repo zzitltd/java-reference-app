@@ -18,16 +18,17 @@ import org.springframework.jdbc.datasource.LazyConnectionDataSourceProxy;
  *
  * <p><b>Expected database layout</b> (provisioned WITH the database, outside this app — see
  * {@code db/init/01-roles.sql} for the reference layout): NOLOGIN group roles (owner / rw / ro), a
- * schema owned by the owner group, two per-application login users (members of rw and ro), and
- * <b>default privileges</b> that auto-grant everything the rw user creates to the rw/ro groups. The
- * app therefore connects with two users:
+ * schema and all its objects owned by the owner role, and <b>default privileges</b> that auto-grant
+ * everything the owner creates to the rw/ro groups. The pools connect with two users:
  *
  * <ul>
- *   <li><b>read-write</b> — DML plus {@code CREATE} on the schema; Boot's autoconfigured Liquibase
- *       migrates through it (as the primary DataSource), and default privileges make the changelog
- *       GRANT-free.
+ *   <li><b>read-write</b> — DML only, no schema rights.
  *   <li><b>read-only</b> — SELECT only; in a real deployment its URL typically points at a replica.
  * </ul>
+ *
+ * <p>Boot's autoconfigured Liquibase migrates over its own connection as a third, migration user
+ * ({@code spring.liquibase.*}) whose sessions act as the owner role — so the changelog is GRANT-free
+ * and the serving users can neither alter nor drop what it creates.
  *
  * <p><b>Why a config class:</b> {@code spring.datasource.*} configures exactly ONE DataSource —
  * Boot has no property-driven second pool and no read/write routing. The two pools are defined the

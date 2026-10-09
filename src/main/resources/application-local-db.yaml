@@ -11,6 +11,9 @@ spring:
     # Explicit even though true is the default — see application-db.yaml: deployments
     # flip this off in serving pods and migrate from a pre-install/pre-upgrade hook.
     enabled: true
+    url: jdbc:postgresql://localhost:5432/reference?currentSchema=reference
+    user: reference_app_migrate_user
+    password: migrate-local
   docker:
     compose:
       enabled: true

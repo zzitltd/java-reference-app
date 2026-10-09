@@ -6,8 +6,8 @@ description: >-
   Spotless + tidy formatting, the unit/integration test split, git-based versioning, reproducible
   builds, logback logging, graceful shutdown, Prometheus metrics on a side port, optional
   multi-cloud (AWS + Azure behind a retrying port), an optional least-privilege database setup
-  (platform-provisioned roles/permissions, routed read-write/read-only pools, grant-free Liquibase
-  changelogs), an optional Kubernetes API example (Lease-based leader election; k3s locally), an
+  (platform-provisioned roles/permissions, schema objects owned by a NOLOGIN owner role, a separate
+  migration login, routed read-write/read-only pools, grant-free Liquibase changelogs), an optional Kubernetes API example (Lease-based leader election; k3s locally), an
   optional Kafka example (native kafka-clients — no spring-kafka —, a protobuf message contract
   without a schema registry, at-least-once consumption, Amazon MSK IAM auth as pure configuration), a
   hardened multi-stage container image (JRE runtime; Temurin/Alpine or Corretto/AL2023 flavor per

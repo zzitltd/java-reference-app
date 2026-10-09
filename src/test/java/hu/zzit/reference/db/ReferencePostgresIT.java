@@ -3,7 +3,10 @@ package hu.zzit.reference.db;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.DataAccessException;
@@ -21,9 +24,9 @@ import org.testcontainers.utility.MountableFile;
 /**
  * Integration test for the database example: a real PostgreSQL (Testcontainers) is bootstrapped
  * with the expected role/permission layout (db/init/01-roles.sql — the same script the local
- * compose service uses), Boot's autoconfigured Liquibase migrates through the primary (read-write)
- * pool at startup, and the read-only routing is asserted: {@code readOnly} transactions run on the
- * read-only pool as the read-only user. Runs under failsafe ({@code *IT}).
+ * compose service uses), Boot's autoconfigured Liquibase migrates at startup as the migration user,
+ * and the asserts cover ownership (everything belongs to the owner role), the serving users' lack of
+ * schema rights, and the read-only routing. Runs under failsafe ({@code *IT}).
  *
  * <p>The image tag is pinned to match {@code compose.yaml}.
  */
@@ -50,6 +53,9 @@ class ReferencePostgresIT {
         registry.add("db.readonly.url", () -> url);
         registry.add("db.readonly.username", () -> "reference_app_ro_user");
         registry.add("db.readonly.password", () -> "ro-local");
+        registry.add("spring.liquibase.url", () -> url);
+        registry.add("spring.liquibase.user", () -> "reference_app_migrate_user");
+        registry.add("spring.liquibase.password", () -> "migrate-local");
     }
 
     @Autowired
@@ -81,6 +87,35 @@ class ReferencePostgresIT {
         assertEquals(
                 "reference_app_ro_user",
                 readOnly.execute(status -> jdbc.queryForObject("SELECT current_user", String.class)));
+    }
+
+    @Test
+    void migratedObjectsAreOwnedByTheOwnerRole() {
+        assertEquals(
+                List.of("databasechangelog", "databasechangeloglock", "greeting"),
+                jdbc.queryForList(
+                        "SELECT tablename FROM pg_tables WHERE schemaname = 'reference' ORDER BY tablename",
+                        String.class));
+        assertEquals(
+                List.of("reference_owner"),
+                jdbc.queryForList(
+                        "SELECT DISTINCT tableowner FROM pg_tables WHERE schemaname = 'reference'", String.class));
+    }
+
+    @ParameterizedTest
+    @ValueSource(
+            strings = {
+                "DROP TABLE greeting",
+                "ALTER TABLE greeting ADD COLUMN sneaky text",
+                "TRUNCATE greeting",
+                "CREATE TABLE sneaky (id int)",
+                "SET ROLE reference_owner"
+            })
+    void theReadWriteUserHasNoSchemaRights(String statement) {
+        TransactionTemplate readWrite = new TransactionTemplate(transactionManager);
+
+        assertThrows(
+                DataAccessException.class, () -> readWrite.executeWithoutResult(status -> jdbc.execute(statement)));
     }
 
     @Test

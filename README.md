@@ -243,22 +243,28 @@ Also off by default (`db.enabled=false` — no DataSource, no migration, no DB n
 
 - **Access is provisioned with the database, not by the app.** The expected layout (documented and
   locally created by `db/init/01-roles.sql`, used by the compose PostgreSQL and the integration
-  test): NOLOGIN **group roles** (`<db>_owner`/`_rw`/`_ro`) that carry all permissions, a schema
-  owned by the owner group, **per-application login users** with group membership only (credentials
-  from a secret store), and — crucially — **default privileges**, so every object the migrating
-  user creates is automatically granted to the rw/ro groups. The **changelog therefore contains
-  schema objects only, no GRANTs**.
-- **The app connects with two login users**:
+  test): NOLOGIN **group roles** (`<db>_owner`/`_rw`/`_ro`) that carry all permissions,
+  **per-application login users** with group membership only (credentials from a secret store), and
+  **default privileges** that grant everything the owner role creates to the rw/ro groups — the
+  **changelog therefore contains schema objects only, no GRANTs**.
+- **The owner role owns the schema and every object in it** — never a login user. PostgreSQL makes
+  the creating role the owner, and an owner can always `ALTER`, `DROP` and `GRANT`; if the migrating
+  login owned the tables, rotating or dynamically issuing that login would orphan them, and default
+  privileges tied to it would stop applying. So the migration login is a member of the owner role
+  and **acts as it** (`ALTER ROLE … SET role = '<db>_owner'` — every session starts as the owner).
+- **Three login users, three jobs**:
 
 | User | Rights | Used for |
 |---|---|---|
-| `…_rw_user` | DML + `CREATE` on the schema | writes **and the Liquibase migration** |
+| `…_migrate_user` | acts as `<db>_owner`: owns the schema objects | the Liquibase migration only |
+| `…_rw_user` | `SELECT`/`INSERT`/`UPDATE`/`DELETE`, sequence `USAGE` — no schema rights, no `TRUNCATE`, `REFERENCES`, `TRIGGER` | the serving read-write pool |
 | `…_ro_user` | `SELECT` only | queries; its URL typically points at a replica |
 
-- **Liquibase needs zero connection configuration**: Boot's autoconfiguration migrates through the
-  primary (read-write) pool at startup, and the changelog sits at Boot's *default* location
-  (`db/changelog/db.changelog-master.yaml`). With no DataSource beans (db example off) the
-  autoconfiguration backs off entirely.
+- **Liquibase connects on its own**: `spring.liquibase.{url,user,password}` (`DB_MIGRATE_*`; the URL
+  defaults to the read-write one) give the autoconfigured Liquibase a dedicated connection as the
+  migration user, separate from the pools. The changelog sits at Boot's *default* location
+  (`db/changelog/db.changelog-master.yaml`). With the db example off the autoconfiguration backs off
+  entirely.
 - **`spring.liquibase.enabled` is set explicitly** (to its default, `true`) because it is the knob
   that separates *migrating* from *serving*: deployments typically run the migration once from a
   pre-install/pre-upgrade hook job and set `SPRING_LIQUIBASE_ENABLED=false` in the serving pods —
@@ -278,9 +284,20 @@ Also off by default (`db.enabled=false` — no DataSource, no migration, no DB n
   which would silently outrank the configured pools for autoconfigured consumers. The compose
   service opts out via the `org.springframework.boot.service-connection: false` label
   (see `compose.yaml`).
-- `ReferencePostgresIT` proves the behavior: the migration ran, `readOnly` transactions execute as
-  the read-only user (asserted via `SELECT current_user`), and writes in a `readOnly` transaction
-  fail.
+- `ReferencePostgresIT` proves the behavior: the migration ran and everything it created (Liquibase's
+  own tables included) is owned by the owner role; the read-write user cannot `DROP`, `ALTER`,
+  `TRUNCATE`, create tables or `SET ROLE` to the owner; `readOnly` transactions execute as the
+  read-only user (asserted via `SELECT current_user`) and cannot write.
+- **Converting an existing database** whose objects belong to the former read-write login, per
+  database, in one transaction, as an administrator that is a member of all three group roles
+  (since PostgreSQL 16, creating a role grants its creator `ADMIN OPTION` but not membership —
+  `GRANT <db>_owner TO <admin>` first): create the migration login as above;
+  `REASSIGN OWNED BY <old_rw_login> TO <db>_owner`; replace the default privileges `FOR ROLE
+  <old_rw_login>` with the ones `FOR ROLE <db>_owner`; `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL
+  TABLES` and `GRANT USAGE, SELECT ON ALL SEQUENCES` in the schema to the rw group (and `SELECT` to
+  ro); `REVOKE CREATE ON SCHEMA … FROM <db>_rw`; revoke `TRUNCATE, REFERENCES, TRIGGER` on all
+  tables and `UPDATE` on all sequences from the rw group. Then point the migration at the new
+  login.
 
 ### 13. Optional Kubernetes API: leader election over a Lease
 
@@ -642,6 +659,7 @@ tuned with.
 | `STORAGE_RETRY_MULTIPLIER` | float (`2.0`) | ObjectStorage retry: backoff multiplier. |
 | `STORAGE_RETRY_MAXDELAYMS` | ms (`8000`) | ObjectStorage retry: backoff ceiling. |
 | `DB_RW_URL` / `DB_RW_USERNAME` / `DB_RW_PASSWORD` | — (required with `db`) | Read-write connection. |
+| `DB_MIGRATE_URL` / `DB_MIGRATE_USERNAME` / `DB_MIGRATE_PASSWORD` | URL: the read-write one; others — (required where the migration runs) | Liquibase's connection, as the migration user (§12). Not needed with `SPRING_LIQUIBASE_ENABLED=false`. |
 | `DB_RO_URL` / `DB_RO_USERNAME` / `DB_RO_PASSWORD` | — (required with `db`) | Read-only connection; typically a replica endpoint. |
 | `DB_RW_POOL_SIZE` / `DB_RO_POOL_SIZE` | int (`10`) | Hikari `maximumPoolSize` of the two runtime pools. |
 | `SPRING_LIQUIBASE_ENABLED` | `true`/`false` (`true` with `db`) | Run the migration at startup. Set `false` in serving pods when a hook job migrates (§12). |
