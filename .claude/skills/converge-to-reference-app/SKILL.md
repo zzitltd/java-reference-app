@@ -181,11 +181,12 @@ Add the rules from reference-app §3. **Expect failures on a real project** and 
   extract`) and add a JDK AOT cache from a training run on the runtime JRE in the final stage
   (`-XX:AOTCacheOutput` + `-Dspring.context.exit=onRefresh`), passed at runtime as `-XX:AOTCache`.
   Train with the deployment's GC (`AOT_TRAINING_JVM_OPTS`); a G1-trained cache is rejected under ZGC.
+  Strip the signature files from the extracted dependency jars (the `StripJarSignatures` step of the
+  reference's `extracted` stage, keeping each jar's timestamp): the JVM never caches classes from a
+  signed jar (Azure SDK, Spring Cloud Azure).
 - Spring AOT: keep `spring-boot:process-aot` in the build and exclude `**/*__*` from JaCoCo and
   SpotBugs. Enable it at runtime (`SPRING_AOT=true`) only for a fixed feature set, processing with the
-  production profiles (`<profiles>` on the plugin) — conditions are frozen at build time. It cannot
-  start while beans come from signed jars (Spring Cloud Azure): generated registrations land in the
-  signed package and the JVM rejects the mix.
+  production profiles (`<profiles>` on the plugin) — conditions are frozen at build time.
 - Keep the image build out of Maven; it is the pipeline's step after `verify -Dci-gates`.
 
 ## Known pitfalls (these cost real time in reference-app)

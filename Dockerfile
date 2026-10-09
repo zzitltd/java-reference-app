@@ -28,8 +28,7 @@
 #                                             no classpath scanning or condition evaluation at
 #                                             startup). ONLY for a fixed feature set: conditions were
 #                                             evaluated at build time, runtime profiles no longer add
-#                                             beans. Fails at startup while the (signed) Azure
-#                                             auto-configurations are active — see README §21.
+#                                             beans — see README §21.
 #   AOT_TRAINING_JVM_OPTS                     JVM flags for the AOT training run (default: none = G1,
 #                                             compressed oops). MUST match what the deployment sets in
 #                                             JAVA_TOOL_OPTIONS for GC and pointer mode — a cache
@@ -248,12 +247,55 @@ FROM jar-${JAR_SOURCE} AS jar
 
 ## ---------------------------------------------------------------------------
 ## Stage: extracted — the fat jar unpacked into launcher + lib/ (throwaway, keeps the fat jar
-## out of the final image's layers)
+## out of the final image's layers), with the dependency jars' signatures removed: the JVM
+## never puts classes of a signed jar into the AOT cache. Runs on the flavor's JDK, which can
+## launch the single-file program below from source.
 ## ---------------------------------------------------------------------------
-FROM base AS extracted
+FROM jdk-${JAVA_FLAVOR} AS extracted
 ARG APP_HOME=/app
 COPY --from=jar /app.jar /tmp/app.jar
-RUN java -Djarmode=tools -jar /tmp/app.jar extract --destination /extracted --application-filename app.jar
+COPY <<'EOF' /tmp/StripJarSignatures.java
+import java.io.IOException;
+import java.nio.file.FileSystems;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
+import java.util.regex.Pattern;
+
+// Deletes the signature files of every jar in the given directory. All other entries are copied
+// unchanged and the jar keeps its modification time, so the result stays reproducible.
+class StripJarSignatures {
+    private static final Pattern SIGNATURE = Pattern.compile("[^/]+\\.(SF|RSA|DSA|EC)|SIG-[^/]+");
+
+    public static void main(String[] args) throws IOException {
+        try (var jars = Files.newDirectoryStream(Path.of(args[0]), "*.jar")) {
+            for (Path jar : jars) {
+                FileTime modified = Files.getLastModifiedTime(jar);
+                int removed = 0;
+                try (var zip = FileSystems.newFileSystem(jar)) {
+                    Path metaInf = zip.getPath("/META-INF");
+                    if (Files.isDirectory(metaInf)) {
+                        try (var entries = Files.list(metaInf)) {
+                            for (Path entry : entries.toList()) {
+                                if (SIGNATURE.matcher(entry.getFileName().toString()).matches()) {
+                                    Files.delete(entry);
+                                    removed++;
+                                }
+                            }
+                        }
+                    }
+                }
+                if (removed > 0) {
+                    Files.setLastModifiedTime(jar, modified);
+                    System.out.println("unsigned " + jar.getFileName());
+                }
+            }
+        }
+    }
+}
+EOF
+RUN java -Djarmode=tools -jar /tmp/app.jar extract --destination /extracted --application-filename app.jar \
+    && java /tmp/StripJarSignatures.java /extracted/lib
 
 ## ---------------------------------------------------------------------------
 ## Stage: app — the final image: extracted app + AOT cache from a training run

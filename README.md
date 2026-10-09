@@ -558,25 +558,25 @@ The rest of the design is flavor-independent:
   cache trained with the defaults (G1, compressed oops) is *rejected* — with a warning, falling back
   to normal loading — when the runtime uses ZGC or a heap over 32 GB. For a ZGC deployment pass
   `--build-arg AOT_TRAINING_JVM_OPTS=-XX:+UseZGC`; note that ZGC gains less from the cache (~1.8 s
-  here), so a startup-sensitive service should stay on G1. Classes from **signed jars** (the Azure
-  SDK) cannot be cached and load the normal way. The `app.aot` file is not byte-reproducible; a
+  here), so a startup-sensitive service should stay on G1. The JVM never caches classes from a
+  **signed jar**, so the `extracted` stage strips the signature files from the dependency jars (the
+  Azure SDK and Spring Cloud Azure ship signed — 16 jars here): an Azure-configured start is 11–13 %
+  faster with them stripped, on par with AWS. Nothing depends on the signatures at runtime — the JVM
+  verifies a signed jar but never requires one (only JCE providers on Oracle's JDK must be signed;
+  none are used). The stripping keeps every other entry and each jar's timestamp, so the layer
+  stays reproducible. The `app.aot` file is not byte-reproducible; a
   reproducible *release* image should compare layers, not the whole digest, or drop the cache.
 - **Spring AOT (opt-in, `SPRING_AOT=true`).** The build always runs `spring-boot:process-aot`: Spring
   boots the context in analysis mode at *build* time, evaluates every auto-configuration and bean
   condition, and compiles direct bean registrations into the jar (+360 KB, +5 s build). With
   `-Dspring.aot.enabled=true` — set by `entrypoint.sh` from the `SPRING_AOT` env/build arg — startup
   skips classpath scanning and condition evaluation: measured **~0.62 s instead of ~0.78 s** natively on
-  top of the JDK cache. It is **off by default in the reference** for two reasons:
-  1. *The bean graph is frozen at processing time.* `@ConditionalOnProperty` / `@Profile` are decided
-     during `process-aot` (with no profile active unless `-Dspring-boot.aot.profiles=…` is given), so a
-     runtime `SPRING_PROFILES_ACTIVE=aws,db` no longer adds beans. Right for a service with a fixed
-     feature set — name its production profiles in the plugin's `<profiles>` and build the image with
-     `SPRING_AOT=true` — wrong for the reference's runtime-selected features.
-  2. *Signed jars.* Spring generates the registrations into the package of each bean; for the Spring
-     Cloud Azure auto-configurations that package lives in a **signed** jar, and the JVM refuses to
-     mix signed and unsigned classes in one package (`SecurityException` at startup). The default
-     configuration keeps those auto-configurations excluded (see below), so the default image runs in
-     AOT mode; a service processed with the `azure` profile cannot use Spring AOT today.
+  top of the JDK cache. It is **off by default in the reference** because *the bean graph is frozen at
+  processing time*: `@ConditionalOnProperty` / `@Profile` are decided during `process-aot` (with no
+  profile active unless `-Dspring-boot.aot.profiles=…` is given), so a runtime
+  `SPRING_PROFILES_ACTIVE=aws,db` no longer adds beans. Right for a service with a fixed feature set —
+  name its production profiles in the plugin's `<profiles>` and build the image with `SPRING_AOT=true`
+  — wrong for the reference's runtime-selected features.
   The AOT training run honours the same flag, so the JDK cache matches the AOT-mode class set.
   Generated classes (`*__BeanDefinitions`, `$$SpringCGLIB$$` proxies) are excluded from coverage and
   SpotBugs. Measured in the container: **1.05 s → 0.87 s** (Alpine) and **0.94 s → 0.82 s** (AL2023).
@@ -584,8 +584,7 @@ The rest of the design is flavor-independent:
   region providers, Azure global properties and token credential) sit outside the `s3`/`blob`
   enable-flags and would create beans on every start. `application.yaml` excludes them by default and
   the `aws` / `azure` profiles override the exclusion list with the other provider's entries (a list
-  property is replaced, not merged). Worth ~100 ms per start here, and what makes AOT mode possible
-  for the default image. Beyond that, the classpath is trimmed by **deleting**: a derived service
+  property is replaced, not merged). Worth ~100 ms per start here. Beyond that, the classpath is trimmed by **deleting**: a derived service
   removes the starters, adapters, profiles and tests of the features it does not use — jars on the
   classpath cost startup (opened, scanned for auto-configuration candidates) even when unused.
   Measured ceiling: with all five optional features deleted (94 instead of 231 jars, a 28 MB instead
@@ -654,7 +653,7 @@ tuned with.
 | `KAFKA_TOPIC` | name (`reference-greetings`) | Topic of the Kafka example — provisioned by the platform, never created by the app. |
 | `KAFKA_GROUPID` | name (`reference-app`) | Consumer group; shared by all replicas of one deployment. |
 | `MANAGEMENT_SERVER_PORT` | port (`6080`) | Actuator side port (health, probes, prometheus, sbom, info). |
-| `SPRING_AOT` | `true`/`false` (image default `false`) | Start with Spring's build-time-generated bean registrations (§21). Only for a fixed feature set processed with the right profiles; incompatible with the signed Azure auto-configurations. |
+| `SPRING_AOT` | `true`/`false` (image default `false`) | Start with Spring's build-time-generated bean registrations (§21). Only for a fixed feature set processed with the right profiles. |
 | `JAVA_TOOL_OPTIONS` | JVM flags (unset) | Read by the JVM automatically — the deployment's standard flags (memory, GC, GC logging; see [§21](#21-the-container-image-two-jre-flavors)). A GC other than the one the AOT cache was trained with disables the cache. |
 | `JVM_OPTS`, `JAVA_OPTS` | JVM flags (unset) | Appended explicitly by `entrypoint.sh` — ad-hoc additions on top of `JAVA_TOOL_OPTIONS`. |
 
