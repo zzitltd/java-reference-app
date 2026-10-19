@@ -1,8 +1,10 @@
 # The RBAC reference-app's leader election needs — documentation of the expected
 # permissions, deployed WITH the app (e.g. from its chart), not by the app itself.
-# The Lease lock needs get/create/update on coordination.k8s.io leases; the resourceNames
-# restriction pins it to the one Lease the app actually uses. (create cannot be
-# name-restricted in RBAC, hence the second rule.)
+# The Lease lock needs get/create/update/patch on coordination.k8s.io leases — Fabric8 7.x
+# renews the Lease with PATCH, so without it the leader acquires the Lease but loses it at the
+# first renewal and no replica can take over. The resourceNames restriction pins it to the one
+# Lease the app actually uses. (create cannot be name-restricted in RBAC, hence the second rule.)
+# ReferenceLeaderElectionIT runs the election with exactly this Role.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -11,7 +13,7 @@ rules:
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
     resourceNames: ["reference-app-leader"]
-    verbs: ["get", "update"]
+    verbs: ["get", "update", "patch"]
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
     verbs: ["create"]

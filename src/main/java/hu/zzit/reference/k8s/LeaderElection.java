@@ -11,6 +11,7 @@ import java.net.UnknownHostException;
 import java.time.Duration;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,15 +26,23 @@ import org.slf4j.LoggerFactory;
  * Kubernetes client-go defaults scaled down slightly: lease 15s, renew 10s, retry 2s — a dead
  * leader is replaced within ~15s. The lease is released on shutdown, so rollouts hand over
  * leadership immediately.
+ *
+ * <p>Fabric8's elector runs ONE term: when leadership is lost (a renewal failing past the deadline,
+ * another holder taking over) its future completes and it never competes again. This class then
+ * rejoins after a retry period, so a replica cannot drop out of the election for good.
  */
 public class LeaderElection {
 
     private static final Logger log = LoggerFactory.getLogger(LeaderElection.class);
+    private static final Duration RETRY_PERIOD = Duration.ofSeconds(2);
 
     private final KubernetesClient client;
     private final K8sProperties properties;
     private final AtomicBoolean leader = new AtomicBoolean();
-    private CompletableFuture<?> election;
+    private volatile CompletableFuture<?> election;
+    private volatile boolean stopping;
+    private String namespace;
+    private String identity;
 
     LeaderElection(KubernetesClient client, K8sProperties properties) {
         this.client = client;
@@ -42,10 +51,14 @@ public class LeaderElection {
 
     @PostConstruct
     void start() {
-        String namespace = properties.namespace() != null
+        namespace = properties.namespace() != null
                 ? properties.namespace()
                 : (client.getNamespace() != null ? client.getNamespace() : "default");
-        String identity = properties.identity() != null ? properties.identity() : hostName();
+        identity = properties.identity() != null ? properties.identity() : hostName();
+        join();
+    }
+
+    private void join() {
         log.info("joining leader election for lease {}/{} as {}", namespace, properties.leaseName(), identity);
         election = client.leaderElector()
                 .withConfig(new LeaderElectionConfigBuilder()
@@ -53,7 +66,7 @@ public class LeaderElection {
                         .withLock(new LeaseLock(namespace, properties.leaseName(), identity))
                         .withLeaseDuration(Duration.ofSeconds(15))
                         .withRenewDeadline(Duration.ofSeconds(10))
-                        .withRetryPeriod(Duration.ofSeconds(2))
+                        .withRetryPeriod(RETRY_PERIOD)
                         .withReleaseOnCancel(true)
                         .withLeaderCallbacks(new LeaderCallbacks(
                                 () -> {
@@ -68,6 +81,13 @@ public class LeaderElection {
                         .build())
                 .build()
                 .start();
+        election.whenComplete((result, error) -> {
+            leader.set(false);
+            if (!stopping) {
+                CompletableFuture.delayedExecutor(RETRY_PERIOD.toMillis(), TimeUnit.MILLISECONDS)
+                        .execute(this::join);
+            }
+        });
     }
 
     /** True while THIS instance holds the lease — the guard for run-on-one-replica-only work. */
@@ -77,6 +97,7 @@ public class LeaderElection {
 
     @PreDestroy
     void stop() {
+        stopping = true;
         if (election != null) {
             election.cancel(true); // releaseOnCancel: hands the lease over immediately
         }

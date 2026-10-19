@@ -312,15 +312,21 @@ jobs, cleanup tasks, …). Off by default (`k8s.enabled=false`); the `k8s` profi
 - **`LeaderElection`** is the use case on top: Fabric8's `LeaderElector` (acquire/renew/release
   with fencing) wired to the Spring lifecycle. All replicas compete for one Lease; exactly one
   holds it; a dead leader is replaced within ~15 s and the lease is **released on shutdown**, so
-  rollouts hand leadership over immediately. Guard singleton work with `isLeader()` — and delete
-  this class if all you need is the client.
+  rollouts hand leadership over immediately. Fabric8's elector runs a single term — once leadership
+  is lost (a renewal failing past the deadline, another holder taking over) it never competes again
+  — so the class **rejoins the election** after a retry period; otherwise a replica would drop out
+  for good. Guard singleton work with `isLeader()` — and delete this class if all you need is the
+  client.
 - **RBAC is deployed with the app, not by it**: the Role/RoleBinding the election needs
-  (get/update pinned to the one Lease, plus create) is documented in
-  `k8s/leader-election-rbac.yaml`.
+  (get/update/**patch** pinned to the one Lease, plus create) is documented in
+  `k8s/leader-election-rbac.yaml`. Fabric8 7.x renews the Lease with PATCH: without that verb the
+  leader acquires the Lease, loses it at the first renewal, and no replica can take over.
 - `local-k8s` runs a compose-managed **k3s** — a *real* single-node Kubernetes API server, the
   Floci/Azurite analogue — which writes its admin kubeconfig to `./k3s-output/` for the app.
-  `ReferenceLeaderElectionIT` proves the behavior against a Testcontainers k3s: the sole candidate
-  acquires the Lease, and the Lease object names it as holder.
+  `ReferenceLeaderElectionIT` proves the behavior against a Testcontainers k3s, running the election
+  as a service account with exactly the documented RBAC (cluster admin would hide a missing verb):
+  the sole candidate acquires the Lease, is still leader past the renew deadline, and — after
+  another holder takes the Lease over — rejoins and wins it back once that lease expires.
 
 ### 14. Optional Kafka: native clients, protobuf contract, MSK via config
 
